@@ -236,7 +236,7 @@ class SorterData():
         time.sleep(self.events.Read.delaySec)
         return value
 
-    def __iter__(self) -> Generator["SorterValue"]:
+    def __iter__(self) -> Generator["SorterValue", None, None]:
         with self.lock:        
             iterator = self._values.__iter__()
 

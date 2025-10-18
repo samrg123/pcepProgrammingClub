@@ -6,11 +6,10 @@
     "configurations": [
 
         {
-            "name": "Python Debugger: snake.py",
+            "name": "Python Debugger: main.py",
             "type": "debugpy",
             "request": "launch",
             "program": "${workspaceFolder}/main.py",
-            // "console": "externalTerminal",
             "console": "integratedTerminal",
             "args": [
                 "20", "5"

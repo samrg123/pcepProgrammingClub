@@ -1,5 +1,6 @@
 
 import argparse
+import signal
 from src.Game import *
 
 class MyApple(Apple):
@@ -31,8 +32,8 @@ def main():
         print(f"Width and height must be at least {minDimension}")
         return
 
-    args = argParser.parse_args()
-
+    # enable ctrl+C to exit the game smoothly
+    signal.signal(signal.SIGINT, signal.SIG_DFL)
 
     # run game
     game = Game(width, height)

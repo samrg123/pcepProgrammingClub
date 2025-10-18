@@ -12,6 +12,7 @@ class MyApple(Apple):
 
 def main():
 
+    # build arguments
     argParser = argparse.ArgumentParser(
         description="A terminal text based game of snake!"        
     )
@@ -19,6 +20,7 @@ def main():
     argParser.add_argument("width",  type=int, default=10)
     argParser.add_argument("height", type=int, default=10)
 
+    # parse arguments
     args = argParser.parse_args()
 
     width:int = args.width
@@ -31,10 +33,10 @@ def main():
 
     args = argParser.parse_args()
 
+
+    # run game
     game = Game(width, height)
-
     game.appleClasses.append(MyApple)
-
     game.Start()
 
 

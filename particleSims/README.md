@@ -19,15 +19,15 @@ A big shout out goes to Sanjay for coming up with the idea and creating the init
 <a name="gettingStarted"></a>
 ## Getting Started
 
-As mentioned in the about section, py5 leverages Java Processing library and as such requires that Java be installed on the system and configured correctly. Before getting started make sure that Java is already installed on your system and that the `JAVA_HOME` environment variable is correctly set.
+As mentioned in the about section, py5 leverages Java Processing library and as such requires that Java be installed on the system and configured correctly. Before getting started make sure that Java is already installed on your system and that the `JAVA_HOME` environment variable is correctly set. You can download the latest version of the JDK from oracle [here](https://www.oracle.com/java/technologies/downloads/) and follow [this guide](https://azimuahamed.medium.com/java-environment-variables-setup-windows-11-58fe71e43b5e) to set the `JAVA_HOME` variable.
 
-Once Java is installed clone this repository and install the python requirements  
-First clone the repo and install the required python packages:
+Once Java is installed clone this repository and install the python requirements:
 ```bash
 git clone https://github.com/samrg123/pcepProgrammingClub.git
 cd ./pcepProgrammingClub/particleSims
 pip install -r ./requirements.txt
 ```
+
 
 Then execute the program according to your needs:
 ```bash
@@ -41,13 +41,14 @@ options:
   --height HEIGHT  The height of the viewport in grid units
   --size SIZE      The size of each grid in pixels
 ```
-> Note: if executed without any arguments the program will use a 50x50 size viewport with a grid size of 10 pixels 
+> Note: If executed without any arguments the program will use a 50x50 size viewport with a grid size of 10 pixels 
 
+> NOTE: If you experience a bug that causes python to crash with no error message when executing `main.py` it may be related to a bug in jpype 1.6.0. I encountered this issue on one of my systems and 'fixed it' by rolling back to the previous release of jpype with the following command: `pip install --force-reinstall -v "jpype1==1.5.2"`
 
 <a name="notes"></a>
 ## Things to Do
-- By default the program includes three particles: *Sand*, *RainbowSand*, *Fire*, and *MyParticle*. You can select between the types of particles by pressing the keys 1-4 on your keyboard. Once a particle is selected you can hold down the left mouse button to continually spawn particles under the pointer, tap the middle mouse button to spawn a single particle, or hold the right mouse button to continually remove particles. 
-- In `main.py` there is an `MyParticle` class with TODO's where you can customize *MyParticle*. Mess around with it and see what you can create! Some ideas include, but are not limited to:
+- By default the program includes three particles: **Sand**, **RainbowSand**, **Fire**, and **MyParticle**. You can select between the types of particles by pressing the keys 1-4 on your keyboard. Once a particle is selected you can hold down the left mouse button to continually spawn particles under the pointer, tap the middle mouse button to spawn a single particle, or hold the right mouse button to continually remove particles. 
+- In `main.py` there is an **MyParticle** class with TODO's where you can customize **MyParticle**. Mess around with it and see what you can create! Some ideas include, but are not limited to:
     - A Bomb particle that explodes neighboring particles 
     - A Plant particle that grows into a tree over time if planted on Sand
     - A Cloud particle that floats to the sky and rains

@@ -22,8 +22,8 @@ def main() -> None:
         description="An interactive particle simulation App"        
     )
 
-    argParser.add_argument("--width"  , type=int, default=100, help="The width of the viewport in grid units")
-    argParser.add_argument("--height" , type=int, default=100, help="The height of the viewport in grid units")
+    argParser.add_argument("--width"  , type=int, default=50, help="The width of the viewport in grid units")
+    argParser.add_argument("--height" , type=int, default=50, help="The height of the viewport in grid units")
     argParser.add_argument("--size"   , type=int, default=10,  help="The size of each grid in pixels")
 
     args = argParser.parse_args()

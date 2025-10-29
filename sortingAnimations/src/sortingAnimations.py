@@ -8,8 +8,26 @@ from threading import RLock, Thread
 from typing import Any, Callable, Generator
 
 import matplotlib.pyplot as plt
-from matplotlib import animation, container, patches, patheffects
+from matplotlib import container, patches, patheffects
 
+
+#Note: time.sleep is not accurate for values durations less than ~16ms 
+#      so we implement our own sleep function
+def microSleep(duration:float) -> None:
+    startNs = time.time_ns()
+ 
+    # sleep for durations that are larger than 16ms 
+    minSleepDuration = 16e-3
+    if duration > minSleepDuration:
+        sleepDuration = int(duration / minSleepDuration) * minSleepDuration
+        time.sleep(sleepDuration)
+
+    # spin until we get to the end time
+    # Note: we still need to call time.sleep(0) to allow python to
+    #       do some context switching magic in the background 
+    endNs = startNs + int(1e9 * duration)
+    while time.time_ns() < endNs:
+        time.sleep(0)
 
 @dataclass
 class SorterEvent():
@@ -41,7 +59,6 @@ class Sorter():
 
     _fig             :plt.Figure
     _ax              :plt.Axes
-    _ani             :animation.FuncAnimation
     _bars            :container.BarContainer
     _dirtyBarIndices : set[int]
     _defaultBarColor = "black"  
@@ -188,7 +205,6 @@ class Sorter():
         thread = Thread(target = self._runImplementation)
         thread.start()
         
-
         # update the plot
         # Note: FuncAnimation lags when sorting thread doesn't sleep for long delaySeconds so 
         #       manually animate the graph here for smoother updates
@@ -252,7 +268,7 @@ class SorterData():
             value = self._values[index]
             self._setEvent(self.events.Read, index)
 
-        time.sleep(self.events.Read.delaySec)
+        microSleep(self.events.Read.delaySec)
         return value
 
     def __iter__(self) -> Generator["SorterValue", None, None]:
@@ -264,7 +280,7 @@ class SorterData():
             with self.lock:
                 self._setEvent(self.events.Read, i)
 
-            time.sleep(self.events.Read.delaySec)
+            microSleep(self.events.Read.delaySec)
             yield x
 
     def __setitem__(self, index:int, value:"SorterValue") -> None:
@@ -278,7 +294,7 @@ class SorterData():
             
             self._setEvent(self.events.Write, index)
 
-        time.sleep(self.events.Write.delaySec)
+        microSleep(self.events.Write.delaySec)
 
     def setEvent(self, event:SorterEvent, *values:"SorterValue") -> None:
         with self.lock:
@@ -288,7 +304,7 @@ class SorterData():
 
             self._setEvent(event, *indices)
 
-        time.sleep(event.delaySec)        
+        microSleep(event.delaySec)        
 
     def getContents(self) -> list[Any]:
         with self.lock:        

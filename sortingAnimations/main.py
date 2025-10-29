@@ -13,7 +13,7 @@ class MySelectionSort(Sorter):
         pass
 
 
-def main() -> None:
+def main(mainArgs:list[str]|None = None) -> None:
 
     # register sorter algorithms
     sorterAlgorithms = { x.__name__.lower():x for x in (MySelectionSort, BubbleSort, SelectionSort, QuickSort, InsertionSort, HeapSort, MergeSort) }
@@ -26,7 +26,7 @@ def main() -> None:
 
     argParser.add_argument("algorithm"      , choices=sorterAlgorithms.keys())
     argParser.add_argument("--size"         , type=int   , default=20)
-    argParser.add_argument("--updateMs"     , type=float , default=1000/30)
+    argParser.add_argument("--frameTime"    , type=float , default=1/30)
     argParser.add_argument("--defaultDelay" , type=float , default=10e-3)
     argParser.add_argument("--readDelay"    , type=float)
     argParser.add_argument("--writeDelay"   , type=float)
@@ -37,7 +37,7 @@ def main() -> None:
     argParser.add_argument("--writeColor"   , type=str   , default="maroon")
     argParser.add_argument("--compareColor" , type=str   , default="orange")
 
-    args = argParser.parse_args()
+    args = argParser.parse_args(mainArgs)
 
     # generate a random list of numbers 
     shuffledValues = list(range(1, args.size + 1))
@@ -50,7 +50,7 @@ def main() -> None:
     sorter.sort(
         values              = shuffledValues,
         defaultBarColor     = args.barColor,
-        frameTimeMs         = 1000/60,
+        frameTime           = args.frameTime,
         registerCloseEvents = True,
         events              = SorterEvents(
             Read    = SorterEvent(color=args.readColor,    delaySec=args.defaultDelay if args.readDelay    is None else args.readDelay),

@@ -3,7 +3,7 @@ import os
 import signal
 import time
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import IntEnum
 from threading import RLock, Thread
 from typing import Any, Callable, Generator
 
@@ -26,17 +26,18 @@ class SorterEvents():
     Valid   :SorterEvent = field(default_factory = lambda: SorterEvent("green"))
     Invalid :SorterEvent = field(default_factory = lambda: SorterEvent("red"))
 
-class SorterState(Enum):
-    Halted    = enum.auto()
-    Sorting   = enum.auto()
-    Sorted    = enum.auto()
-    Verifying = enum.auto()
-    Verified  = enum.auto()
+class SorterState(IntEnum):
+    Initializing  = enum.auto()
+    Sorting       = enum.auto()
+    Sorted        = enum.auto()
+    Verifying     = enum.auto()
+    Verified      = enum.auto()
+    Complete      = enum.auto()
 
 class Sorter():
     implementation :Callable[["Sorter"], "SorterData"]
 
-    _state = SorterState.Halted
+    _state: SorterState
 
     _fig             :plt.Figure
     _ax              :plt.Axes
@@ -56,8 +57,8 @@ class Sorter():
         if implementation is None:
             raise NotImplementedError(f"Missing implementation! Please extend Sorted class with implementation method")
         
-        self._state = SorterState.Sorting
         self._sortStartNs = time.time_ns()
+        self._state = SorterState.Sorting
 
         implementation(self._data)
 
@@ -78,7 +79,7 @@ class Sorter():
 
 
     def _updateFigure(self, frame:int) -> None:
-        if self._state == SorterState.Halted:
+        if self._state == SorterState.Initializing or self._state == SorterState.Complete:
             return
 
         # cache data variables
@@ -130,7 +131,7 @@ class Sorter():
                 Thread(target=self._runVerification).start()
 
             case SorterState.Verified:
-                self._state == SorterState.Halted
+                self._state = SorterState.Complete
 
                 # add pass/fail overlay
                 if invalidCount == 0:
@@ -153,13 +154,11 @@ class Sorter():
 
                 text.set_path_effects([patheffects.withStroke(linewidth=5, foreground="white")])
 
-                # stop the animation
-                self._ani.pause()
 
-
-    def sort(self, values:list[Any], defaultBarColor:str = "skyblue", events:SorterEvents = None, frameTimeMs:float = 1000/30, registerCloseEvents:bool=False) -> list[Any]:
+    def sort(self, values:list[Any], defaultBarColor:str = "skyblue", events:SorterEvents = None, frameTime:float = 1/30, registerCloseEvents:bool=False) -> list[Any]:
 
         # create data
+        self._state = SorterState.Initializing
         if events is None:
             events = SorterEvents()
     
@@ -176,23 +175,43 @@ class Sorter():
         self._defaultBarColor = defaultBarColor
         self._bars = self._ax.bar(range(dataLength), self._data.getContents(), color=([defaultBarColor] * dataLength))
         
-        self._ani = animation.FuncAnimation(fig=self._fig, func=self._updateFigure, interval=frameTimeMs, cache_frame_data=False)
-        self._ani.resume()
-
         # register close events
         if registerCloseEvents:
             signal.signal(signal.SIGINT, signal.SIG_DFL)
             self._fig.canvas.mpl_connect('close_event', lambda e: os._exit(0))
 
+
+        # show the unsorted data
+        plt.show(block=False)
+
         # start sorting on background thread
         thread = Thread(target = self._runImplementation)
         thread.start()
+        
 
-        # block main thread until animation is closed
+        # update the plot
+        # Note: FuncAnimation lags when sorting thread doesn't sleep for long delaySeconds so 
+        #       manually animate the graph here for smoother updates
+        i = 0
+        lastUpdateTime = time.time()
+        while self._state != SorterState.Complete:
+            self._updateFigure(i)
+            
+            updateTime = time.time()
+            deltaT = updateTime - lastUpdateTime
+
+            # Note: we need to give matplotlib some reasonable amount of time
+            #       to process input, otherwise it will lock up so we always 
+            #       pause for at least wait 1 microsecond 
+            pauseTime = max(1e-6, frameTime - deltaT)
+            plt.pause(pauseTime)
+
+            lastUpdateTime = updateTime
+            i+=1
+
+
+        # block until main window is closed 
         plt.show(block=True)
-
-        # wait for sorting to complete
-        thread.join()
 
         # return results 
         return self._data.getContents()

@@ -1,0 +1,27 @@
+{
+	"folders": [
+		{
+			"path": "physicsSim"
+		},
+		{
+			"path": "sortingAnimations"
+		},
+		{
+			"path": "snake"
+		},
+		{
+			"path": "particleSims"
+		},
+		{
+			"path": "seamCarving"
+		}
+	],
+	"settings": {
+		"terminal.integrated.env.windows": {
+			"path": "${env:LOCALAPPDATA}/Programs/Python/Python311;${env:LOCALAPPDATA}/Programs/Python/Python311/Scripts;${env:PATH}"
+		},
+		"cSpell.words": [
+			"argb"
+		]
+	}
+}

@@ -3,7 +3,6 @@ import argparse
 from src.SeamCarver import SeamCarver
 from src.Image import Image
 
-from matplotlib import pyplot as plt
 import numpy as np
 
 class MySeamCarver(SeamCarver):

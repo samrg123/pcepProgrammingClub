@@ -9,6 +9,7 @@ import numpy as np
 class MySeamCarver(SeamCarver):
     def pixelEnergy(self, image:Image, x:int, y:int):
         # TODO: Experiment with your own energy function
+
         return super().pixelEnergy(image, x, y)
 
 
@@ -26,7 +27,6 @@ def main(argList:list[str]|None=None):
     image = Image(imagePath)
 
     newWidth:int = args.width if args.width is not None else np.max([1, image.width//2, image.width - 50])
-    
     if newWidth <= 0 or newWidth > image.width:
         print(f"New width must be greater than zero and larger than image width! [newWidth: {newWidth} | imageWidth: {image.width}]")
         return
@@ -40,6 +40,7 @@ def main(argList:list[str]|None=None):
     # plot the results!
     Image.plotImages(
         title     = f"Seam Carving: {imagePath}",
+        cmap      = "magma",
         imageDict = {
 
             image       : f"Original ({image.width}x{image.height})",

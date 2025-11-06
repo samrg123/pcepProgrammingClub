@@ -129,7 +129,7 @@ class SeamCarver:
         seamImage._pixelBuffer[:,0:carvedImage.width] = carvedImage._pixelBuffer[:,0:carvedImage.width]
         seamImage.width = carvedImage.width
 
-        # 'uncurve' the image in reverse order
+        # 'uncarve' the image in reverse order
         for i in reversed(range(numCarvedColumns)):
             carvedColumn = carvedColumns[i]
 

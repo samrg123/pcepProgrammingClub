@@ -1,4 +1,4 @@
-from typing import overload
+from typing import Self, overload
 
 import cv2
 import numpy as np
@@ -10,14 +10,16 @@ class Image:
     height :int
     depth  :int 
 
-    _pixelBuffer :np.ndarray
+    _pixelBuffer :np.ndarray[np.float32]
     _windowName  :str|None = None
 
     @staticmethod
     def plotImages(imageDict:dict["Image", str], title:str="", cmap:str="gray") -> None:
         numSubplots = len(imageDict)
-        numSubplotsX = int(np.round(np.sqrt(numSubplots)))
-        numSubplotsY = int(np.ceil(numSubplots / numSubplotsX))
+
+        # Note: order matters. We favor larger numSubplotsX over numSubplotsY  
+        numSubplotsY = int(np.round(np.sqrt(numSubplots)))
+        numSubplotsX = int(np.ceil(numSubplots / numSubplotsY))
 
         fig = plt.figure(title)
         for i,(image, name) in enumerate(imageDict.items()):
@@ -79,45 +81,16 @@ class Image:
 
 
     @property
+    def bufferView(self):
+        return self._pixelBuffer[0:self.height, 0:self.width, :]
+
+    @property
     def pixels(self):
         return self._pixelBuffer[0:self.height, 0:self.width, :].astype(np.uint8)
 
     @property
     def pixelsRGB(self):
         return self._pixelBuffer[0:self.height, 0:self.width, ::-1].astype(np.uint8)
-
-
-    def getNeighbors(self, x:int, y:int) -> np.ndarray:
-        """ 
-            Returns an 3x3xd array of pixels centered around x, y where d is the color depth of the image (3 for BGR). 
-            If the neighbor is outsize of bounds its pixel value is clamped to the value at x,y 
-        """
-
-        if x > 0 and y > 0 and x < self.width-1 and y < self.height-1:
-            # return a view of the current buffer for speedup
-            return self._pixelBuffer[y-1:y+2, x-1:x+2]
-
-
-        # return a copy of the elements
-        neighbors = np.empty((3,3,self.depth), dtype=self._pixelBuffer.dtype)
-
-        for ny in range(3):
-            py = y + ny - 1
-
-            # clamp py to be in bounds
-            if py < 0 or py >= self.height:
-                py = y
-
-            for nx in range(3):
-                px = x + nx - 1
-
-                # clamp px to be in bounds
-                if px < 0 or px >= self.width:
-                    px = x
-
-                neighbors[ny, nx] = self._pixelBuffer[py, px]
-
-        return neighbors
     
 
     def isVisible(self) -> bool:
@@ -145,3 +118,56 @@ class Image:
 
     def save(self, path:str) -> None:
         cv2.imwrite(path, self.pixels)
+
+
+    def getNeighbors(self, x:int, y:int) -> np.ndarray:
+        """ 
+            Returns an 3x3xd array of pixels centered around x, y where d is the color depth of the image (3 for BGR). 
+            If the neighbor is outsize of bounds its pixel value is clamped to the value at x,y 
+        """
+
+        if x > 0 and y > 0 and x < self.width-1 and y < self.height-1:
+            # return a view of the current buffer for speedup
+            return self._pixelBuffer[y-1:y+2, x-1:x+2]
+
+
+        # return a copy of the elements
+        neighbors = np.empty((3,3,self.depth), dtype=np.float32)
+
+        for ny in range(3):
+            py = y + ny - 1
+
+            # clamp py to be in bounds
+            if py < 0 or py >= self.height:
+                py = y
+
+            for nx in range(3):
+                px = x + nx - 1
+
+                # clamp px to be in bounds
+                if px < 0 or px >= self.width:
+                    px = x
+
+                neighbors[ny, nx] = self._pixelBuffer[py, px]
+
+        return neighbors
+
+    def normalize(self) -> Self:
+        bufferView = self.bufferView
+        minVal     = bufferView.min()
+        maxVal     = bufferView.max()
+        deltaVal   = maxVal - minVal
+
+        if deltaVal == 0:
+            # black image
+            bufferView.fill(0)
+
+        else:
+            # normalize energy into 8 bit values
+            bufferView
+            return Image((255 / deltaVal) * (bufferView - minVal))
+
+        return self
+    
+    def resized(self, width:int, height:int) -> "Image":
+        return Image(cv2.resize(src = self.bufferView, dsize = (width, height)))

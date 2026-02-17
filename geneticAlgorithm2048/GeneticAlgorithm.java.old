@@ -1,0 +1,1305 @@
+import java.awt.Color;
+import java.awt.Dimension;
+import java.awt.FontMetrics;
+import java.awt.Graphics;
+import java.awt.Rectangle;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Random;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+
+import javax.swing.BoxLayout;
+import javax.swing.JPanel;
+import javax.swing.JScrollPane;
+
+public class GeneticAlgorithm {
+
+    public static double Lerp(double t, double min, double max) {
+        return t * (max - min) + min;
+    }
+
+    public static class Neuron {
+        protected double[] m_weights;
+        
+        public Neuron(double[] weights) {
+            m_weights = weights.clone();
+        }
+
+        public Neuron(int inputSize, Random random) {
+            // Note: +1 for bias
+            m_weights = random.doubles(inputSize+1, -1, 1).toArray();
+        }
+
+        public double Eval(double[] inputs, int inputOffset) {
+            // TODO: compare ReLu / tanh / sigmoid
+            
+            // initialize to bias
+            int biasIndex = m_weights.length-1;
+            double weightedInput = m_weights[biasIndex];
+
+            for(int i = 0; i < biasIndex; ++i) {
+                weightedInput+= inputs[inputOffset + i] * m_weights[i];
+            }
+
+            return Math.tanh(weightedInput);
+        }
+    }   
+
+    public static class Layer {
+        protected Neuron[] m_neurons;
+        protected double[] m_results;
+
+        protected int m_inputSize;
+
+        public Layer(int inputSize, Neuron[] neurons) {
+            m_inputSize = inputSize;
+            m_neurons = neurons.clone();
+            m_results = new double[neurons.length];
+        }
+
+        public Layer(int inputSize, int outputSize, Random random) {
+            m_inputSize = inputSize;
+            m_neurons = new Neuron[outputSize];
+            m_results = new double[outputSize];
+
+            for(int i = 0; i < outputSize; ++i) {
+                m_neurons[i] = new Neuron(inputSize, random);
+            }            
+        }
+
+        public void Eval(double[] inputs, int inputOffset, double[] outputs, int outputOffset) {
+            assert outputs.length >= m_neurons.length : ("Invalid input size: "+inputs.length+" | Expected at least: "+m_neurons.length);
+
+            for(int i = 0; i < m_neurons.length; ++i) {
+                outputs[outputOffset + i] = m_neurons[i].Eval(inputs, inputOffset);
+            }
+        }
+
+        public double[] Eval(double[] inputs) {
+            Eval(inputs, 0, m_results, 0);
+            return m_results;
+        }
+    }
+
+    public static class Network {
+        protected Layer[] m_layers;
+        protected int m_outputSize;
+        protected int m_maxNumLayerWeights;
+
+        protected static class ThreadState {
+            // Note: m_threadSafeLayerOutput needs to be large enough to store input and output partial results
+            public double[] layerOutput;
+            public double[] evalResults; 
+
+            public ThreadState(Network network) {
+                layerOutput = new double[2*network.m_maxNumLayerWeights];
+                evalResults = new double[network.m_outputSize];
+            }
+
+        }
+
+        ThreadLocal<ThreadState> m_threadState = ThreadLocal.withInitial(() -> new ThreadState(this));
+
+        public Network(int inputSize, int[] layerWidths, Random random) {
+
+            int numLayers = layerWidths.length;
+            assert numLayers > 0: "Invalid numLayers. Expected pos number got: "+numLayers;
+
+            m_layers = new Layer[numLayers];
+            m_outputSize = layerWidths[numLayers-1];
+            
+            // Note: updated below;
+            m_maxNumLayerWeights = inputSize;
+
+            // create layers
+            int layerInputSize = inputSize;
+            for(int i = 0; i < numLayers; ++i) {
+                int layerWidth = layerWidths[i];
+                m_layers[i] = new Layer(layerInputSize, layerWidth, random);
+            
+                if(layerWidth > m_maxNumLayerWeights) {
+                    m_maxNumLayerWeights = layerWidth;
+                }
+
+                layerInputSize = layerWidth;
+            }
+        }
+
+        public void Reset(Random random) {
+            for(Layer layer : m_layers) {
+                for(Neuron neuron : layer.m_neurons) {
+                    neuron.m_weights = random.doubles(neuron.m_weights.length, -1, 1).toArray();
+                }
+            }
+        }
+
+        public double[] Eval(double[] inputs) {        
+            for(Layer layer : m_layers) {
+                inputs = layer.Eval(inputs);
+            }
+            
+            return inputs;
+        }
+
+        public double[] EvalThreadSafe(double[] inputs) {
+            
+            ThreadState threadState = m_threadState.get();
+
+            double[] results = threadState.evalResults;
+            double[] outputs = threadState.layerOutput;
+            
+            // eval intermediate layers into outputs
+            // Note: we offset the input and output because we cannot call Eval with same input and output location.
+            //       If we did input will be partialally overwritten during neuron eval calls
+            int inputReadOffset = 0;
+            int outputWriteOffset = 0;
+            int lastLayerIndex = m_layers.length - 1;
+
+            for(int i = 0; i < lastLayerIndex; ++i) {
+                Layer layer = m_layers[i];
+                
+                layer.Eval(inputs, inputReadOffset, outputs, outputWriteOffset);
+            
+                inputs = outputs;
+                inputReadOffset = outputWriteOffset;
+                outputWriteOffset = (outputWriteOffset == 0) ? m_maxNumLayerWeights : 0;
+            }
+
+            // eval output layer into correctly sized results array
+            m_layers[lastLayerIndex].Eval(inputs, inputReadOffset, results, 0);       
+            return results;
+        }
+    }
+
+    public static class NetworkDrawer extends AppFrame {
+
+        public static final int kDeafultWindowWidth = 600;
+        public static final int kDefaultWindowHeight = 300;
+        
+        public static final int kDefaultGraphWidth  = (int)(kDeafultWindowWidth * .4 + .5);
+        public static final int kDefaultGraphHeight = 50;
+
+        protected Network m_network;
+        protected String[] m_inputNames;
+        protected String[] m_outputNames;
+        protected Color[] m_outputColors;
+
+        protected double m_neuronRadius  = 12.5;
+        protected double m_layerPadding  = 20 + m_neuronRadius;
+        protected double m_neuronPadding = 10 + m_neuronRadius;
+        protected double m_biasLength    = m_neuronPadding / 2;
+
+        // Note: tmp variable for RGB to HSV color conversion... Java Color library is slow and dumb
+        private float[] m_tmpHSV = new float[3];
+        
+        protected NetworkPanel m_networkPanel = new NetworkPanel();
+        protected GraphPane m_graphPane = new GraphPane();
+        
+        public class NetworkPanel extends JPanel {
+
+            @Override
+            public synchronized void paint(Graphics graphics) {
+                if(m_network == null) return;
+
+                // Rectangle rootRect = m_rootPane.getBounds();
+                Rectangle bounds = getBounds(); 
+
+                graphics.setColor(Color.BLACK);
+                graphics.fillRect(bounds.x, bounds.y, bounds.width, bounds.height);
+
+                graphics.setFont(m_font);
+                FontMetrics fontMetrics = graphics.getFontMetrics();
+
+                int neuronDiameter = (int)(2 * m_neuronRadius);
+                int numLayers = m_network.m_layers.length;
+
+                double layerXOffset = bounds.x + m_layerPadding;
+                double layerYOffset = bounds.y + m_neuronPadding;
+                
+                double layerHeight = bounds.height - 2*m_neuronPadding;
+                double layerStride = (double)(bounds.width - 2*m_layerPadding) / numLayers;
+
+                // Note: the normalized significance of each neuron in a layer relative to each final output neuron
+                //       we preallocate a significance array bit enough to fit the output layer and the next computed input layer   
+                //       and update relavent indicies as needed. Values are initialized for a 1 hot encoding for last output layer
+                int outputSize = m_network.m_outputSize;
+                int significancesStride = m_network.m_maxNumLayerWeights * outputSize;
+                double[] significances = new double[2 * significancesStride];
+                for(int i = 0; i < outputSize; ++i) {
+                    significances[i*outputSize + i] = 1;
+                };
+                
+                // Note: we draw layers in reverse order to allow us to backpropigate significance
+                int outputLayerSignificanceOffset = 0;
+                int lastLayerIndex = numLayers-1;
+                for(int l = lastLayerIndex; l >= 0 ; --l) {
+                    boolean drawOutputNames = (m_outputNames != null && l == lastLayerIndex);
+                    
+                    Layer layer = m_network.m_layers[l];
+
+                    int numInputs = layer.m_inputSize;
+                    int numNeurons = layer.m_neurons.length;
+
+                    double inputStride = layerHeight / numInputs;
+                    double neuronStride = layerHeight / numNeurons; 
+
+                    int inputX = (int)(layerXOffset + l * layerStride);
+                    int neuronX = (int)(inputX + layerStride);
+
+                    double neuronYOffset = layerYOffset + .5*neuronStride;
+
+                    // zero initialize input signifcances
+                    int inputLayerSignificanceOffset = (outputLayerSignificanceOffset == 0) ? significancesStride : 0;
+                    int inputSignificanceSize = numInputs * outputSize;
+                    for(int i = 0; i < inputSignificanceSize; ++i) {
+                        significances[inputLayerSignificanceOffset + i] = 0;
+                    }
+
+                    int lastNeuronIndex = numNeurons - 1; 
+                    for(int n = 0; n < numNeurons; ++n) {
+                        Neuron neuron = layer.m_neurons[n];
+                        int neuronY = (int)(neuronYOffset + n * neuronStride);
+
+                        int neuronSignificanceOffset = outputLayerSignificanceOffset + n*outputSize;
+                        Color neuronColor = GetNeuronColor(outputSize, neuronSignificanceOffset, significances, m_outputColors);
+                        double neuronSignificance = neuronColor.getAlpha() / 255.0;
+
+                        // compute weight magnitude for normalization
+                        double totalAbsWeight = 0;
+                        for(int i = 0; i < neuron.m_weights.length; ++i) {
+                            totalAbsWeight+= Math.abs(neuron.m_weights[i]);
+                        }
+                        double absWeightNormalizer = (totalAbsWeight != 0) ? 1/totalAbsWeight : 1;
+
+                        // draw inputs
+                        for(int i = 0; i < numInputs; ++i) {
+                            double inputYOffset = layerYOffset + .5*inputStride;
+                            int inputY = (int)(inputYOffset + i * inputStride);
+
+                            double weightSignificance = Math.abs(neuron.m_weights[i]) * absWeightNormalizer;
+                            Color weightColor = GetWeightColor(weightSignificance, neuronColor, neuronSignificance);
+
+                            graphics.setColor(weightColor);
+                            graphics.drawLine(inputX, inputY, neuronX, neuronY);
+
+                            // update input neuron signficance
+                            int inputSignificanceOffset = inputLayerSignificanceOffset + i*outputSize;
+                            for(int o = 0; o < outputSize; ++o) {
+                                double outputSignficance = significances[neuronSignificanceOffset + o];
+                                significances[inputSignificanceOffset + o]+= outputSignficance * weightSignificance;
+                            }
+
+                            // Note: we draw inputs on lastNeuronIndex so we can colorize it to match significance
+                            boolean drawInputNames = (m_inputNames != null && l == 0 && n == lastNeuronIndex);
+                            if(drawInputNames) {
+                                String inputName = m_inputNames[i];
+                                int inputNameWidth = fontMetrics.stringWidth(inputName);
+
+                                // center x
+                                int inputNameX = inputX - inputNameWidth;
+                                if(inputNameWidth < m_layerPadding) {
+                                    inputNameX-= (m_layerPadding - inputNameWidth)/2;
+                                }
+
+                                // center Y
+                                int inputNameY = inputY + (fontMetrics.getAscent() - fontMetrics.getLeading())/2;
+
+                                //Note: this gets called for last neuron input so we can safely compute the input layer color
+                                Color inputNameColor = GetNeuronColor(outputSize, inputSignificanceOffset, significances, m_outputColors);
+                                graphics.setColor(inputNameColor);
+                                graphics.drawString(inputName, inputNameX, inputNameY);
+                            }
+                        }      
+
+                        // draw neuron bias
+                        double neuronBiasSignificance = Math.abs(neuron.m_weights[numInputs]) * absWeightNormalizer;
+                        Color biasColor = GetWeightColor(neuronBiasSignificance, neuronColor, neuronSignificance);
+
+                        int biasX1 = (int)(neuronX - .5*m_biasLength);
+                        int biasX2 = (int)(neuronX + .5*m_biasLength);
+                        int biasY1 = neuronY;
+                        int biasY2 = (int)(neuronY + m_neuronRadius + m_biasLength);
+
+                        graphics.setColor(biasColor);
+                        graphics.drawLine(neuronX, biasY1, neuronX, biasY2);
+                        graphics.drawLine(biasX1, biasY2, biasX2, biasY2);
+
+                        // draw neuron
+                        graphics.setColor(neuronColor);
+                        
+                        // Note: fillOval is upper left x,y coordinates NOT center
+                        int neuronCornerX = (int)(neuronX - m_neuronRadius);
+                        int neuronCornerY = (int)(neuronY - m_neuronRadius);
+                        graphics.fillOval(neuronCornerX, neuronCornerY, neuronDiameter, neuronDiameter);
+
+                        if(drawOutputNames) {                        
+                            graphics.drawString(m_outputNames[n], neuronCornerX, neuronCornerY);
+                        }
+                    }
+
+                    outputLayerSignificanceOffset = inputLayerSignificanceOffset;
+                }
+            }
+
+            protected Color GetNeuronColor(int outputSize,int significanceOffset, double[] significances, Color[] outputColors) {
+
+                int neuronR = 0;
+                int neuronG = 0;
+                int neuronB = 0;
+                double neuronAlpha = 0;
+                
+                // compute neuron color with brightness of each output color based on output significance 
+                for(int i = 0; i < outputSize; ++i) {
+                    double significance = significances[significanceOffset + i];
+                    
+                    Color outputColor = outputColors[i];
+                    Color.RGBtoHSB(outputColor.getRed(), outputColor.getGreen(), outputColor.getBlue(), m_tmpHSV);
+                    
+                    Color significanceColor = Color.getHSBColor(m_tmpHSV[0], m_tmpHSV[1], (float)significance);
+                
+                    neuronR+= significanceColor.getRed();
+                    neuronG+= significanceColor.getGreen();
+                    neuronB+= significanceColor.getBlue();                
+                    
+                    neuronAlpha+= significance;
+                }
+
+                // normalize color to maximum dynamic range to keep everything visible
+                int maxValue = (neuronR > neuronG) ? neuronR : neuronG;
+                if(neuronB > maxValue) maxValue = neuronB;
+
+                double normalizer = (maxValue != 0) ? (255./maxValue) : 1;
+
+                neuronR*= normalizer;
+                neuronG*= normalizer;
+                neuronB*= normalizer;
+
+                int neuronA = (neuronAlpha >= 1) ? 255 : 
+                            (neuronAlpha <= 0) ? 0   : (int)(255 * neuronAlpha);
+
+                return new Color(neuronR, neuronG, neuronB, neuronA);
+            }
+
+            protected Color GetWeightColor(double weightSignificance, Color neuronColor,  double neuronSignificance) {
+
+                double weightAlpha = weightSignificance * neuronSignificance;
+
+                int weightARGB = neuronColor.getRGB();
+                weightARGB = (weightARGB & 0xFFFFFF) | ((int)(weightAlpha * 255) << 24);
+
+                return new Color(weightARGB, true);
+            }            
+        };
+
+        public class GraphPanel extends JPanel {
+
+            public String m_name = "Graph";
+            public Color m_color = Color.GRAY;
+            public int m_padding = 5;
+
+            public double[] m_data;
+            public int m_dataStartIndex = 0;
+            public int m_dataEndIndex   = 0;
+            
+            public int m_numPoints;            
+
+            public double m_yMin = 0;
+            public double m_yMax = 1;
+
+            public double m_xMin = 0;
+            public double m_xMax = 1;                
+
+            protected int[] m_pointsX;
+            protected int[] m_pointsY;
+            
+            public GraphPanel(String name, int numPoints, double[] data, int dataStartIndex, int dataEndIndex) {
+                setPreferredSize(new Dimension(kDefaultGraphWidth, kDefaultGraphHeight));
+
+                m_name      = name;
+                m_numPoints = numPoints;
+
+                m_data           = data;
+                m_dataStartIndex = dataStartIndex;
+                m_dataEndIndex   = dataEndIndex;
+
+                m_pointsX = new int[numPoints];
+                m_pointsY = new int[numPoints];
+            }
+
+            @Override
+            public void paint(Graphics graphics) {
+                Rectangle bounds = getBounds();
+
+                // clear screen
+                graphics.setColor(Color.BLACK);
+                graphics.fillRect(0, 0, bounds.width, bounds.height);
+
+                graphics.setColor(m_color);
+                    
+                // draw title
+                int fontSize = m_font.getSize();
+
+                int plotCount = Math.min(m_numPoints, m_dataEndIndex - m_dataStartIndex);
+                double lastPlotY = (plotCount > 0) ? m_data[m_dataStartIndex + plotCount - 1] : 0;
+
+                String graphTitle = String.format("%s [%.01f, %.01f]: %.01f", m_name, m_yMin, m_yMax, lastPlotY);                
+
+                graphics.setFont(m_font);
+                graphics.drawString(graphTitle, m_padding, fontSize);
+
+                // draw x axis
+                int xAxisY  = bounds.height - m_padding;
+                int xAxisX1 = m_padding;
+                int xAxisX2 = bounds.width - m_padding;
+                graphics.drawLine(xAxisX1, xAxisY, xAxisX2, xAxisY);
+
+                // draw y axis
+                int yAxisX  = m_padding;
+                int yAxisY1 = m_padding + fontSize;
+                int yAxisY2 = bounds.height - m_padding; 
+                graphics.drawLine(yAxisX, yAxisY1, yAxisX, yAxisY2);
+
+                // compute points from data
+                int xAxisLength = xAxisX2 - xAxisX1;
+                int yAxisLength = yAxisY2 - yAxisY1;
+
+                double xAxisRange = m_xMax - m_xMin;
+                double yAxisRange = m_yMax - m_yMin;
+
+                double xPixelStride = xAxisLength / xAxisRange;
+                double yPixelStride = yAxisLength / yAxisRange;
+                
+                for(int i = 0; i < plotCount; ++i) {
+                    double yVal = m_data[m_dataStartIndex + i];
+
+                    m_pointsX[i] = xAxisX1 + (int)(xPixelStride * i);
+                    m_pointsY[i] = yAxisY2 - (int)(yPixelStride * (yVal - m_yMin));
+                }
+            
+                // draw points
+                graphics.drawPolyline(m_pointsX, m_pointsY, plotCount);
+            }
+        }
+
+        public class GraphPane extends JScrollPane {
+
+            protected JPanel m_viewportPanel = new JPanel();
+
+            GraphPane() {
+                setViewportView(m_viewportPanel);
+
+                setHorizontalScrollBarPolicy(JScrollPane.HORIZONTAL_SCROLLBAR_NEVER);
+                setVerticalScrollBarPolicy(JScrollPane.VERTICAL_SCROLLBAR_ALWAYS);
+
+                m_viewportPanel.setLayout(new BoxLayout(m_viewportPanel, BoxLayout.Y_AXIS));
+            }        
+        }
+
+        public NetworkDrawer(String title) {
+            super(title, kDeafultWindowWidth, kDefaultWindowHeight);
+
+            m_contentPane.setLayout(new BoxLayout(m_contentPane, BoxLayout.X_AXIS));
+
+            m_contentPane.add(m_networkPanel);
+            m_contentPane.add(m_graphPane);
+
+
+            m_networkPanel.setPreferredSize(new Dimension(kDeafultWindowWidth - kDefaultGraphWidth, kDefaultWindowHeight));
+            m_graphPane.setPreferredSize(new Dimension(kDefaultGraphWidth, kDefaultWindowHeight));
+        }
+
+        public synchronized void SetNetwork(Network network, String[] inputNames, String[] outputNames, Color[] outputColors) {
+            m_network = network;
+            m_inputNames = inputNames;
+            m_outputNames = outputNames;
+            m_outputColors = outputColors;
+        }
+
+        public GraphPanel AddGraph(String name, int numPoints, double data[], int startIndex, int endIndex) {
+            GraphPanel graphPanel = new GraphPanel(name, numPoints, data, startIndex, endIndex);
+            m_graphPane.m_viewportPanel.add(graphPanel);
+            return graphPanel;
+        }
+
+    };
+
+    public static final Game.Direction[] kDirections = Game.Direction.values();
+
+    public Network m_network;
+    public Random m_random;
+ 
+    public static void SortIndices(double[] values, int[] sortedIndices) {
+        for(int i = 0; i < values.length; ++i) {
+
+            // place at end and bubble up to sorted position
+            double result = values[i];
+            sortedIndices[i] = i;
+            
+            for(int j = i-1; j >= 0; --j) {
+                int jResultIndex = sortedIndices[j];    
+
+                if(values[jResultIndex] >= result) break;
+
+                sortedIndices[j+1] = jResultIndex;
+                sortedIndices[j] = i;
+            }
+        }
+    }
+
+    public GeneticAlgorithm(long seed, int[] layerWidths) {
+        m_random = new Random(seed);
+        m_network = new Network(Game.kBoardSize, layerWidths, m_random);
+    }
+
+
+    public static int GetHighestBit(int value) {
+        int bits = 0;
+        while(value > (1 << bits)) {
+            ++bits;
+        }
+
+        return bits;
+    }
+ 
+    public static double PlayGame(Game game, Network network, int msDelay, boolean threadSafe) {
+
+        double[] inputs = new double[Game.kBoardSize];
+        int[] sortedResultIndices = new int[kDirections.length];
+
+        while(!game.IsGameOver()) {
+
+            // get board input
+            for(int i = 0; i < inputs.length; ++i) {
+                int tile = game.m_board[i];
+
+                // Normalized input for the largest possible tile value of 131,072 = 2^17
+                int tileBits = GetHighestBit(tile);
+                inputs[i] = tileBits * (1/17.0);
+            }
+            
+            // evaluate network
+            double[] results = threadSafe ? network.EvalThreadSafe(inputs) : network.Eval(inputs);
+            
+            // Sort results only 4 results, this insertion sort should be fast
+            SortIndices(results, sortedResultIndices);
+
+            // make best move
+            for(int i = 0; i < sortedResultIndices.length; ++i) {
+                int directionIndex = sortedResultIndices[i];
+
+                if(game.Move(kDirections[directionIndex])) {
+                    break;
+                }
+            }
+
+            if(msDelay > 0) {
+                try {
+                    Thread.sleep(msDelay);
+                } catch (InterruptedException e) {}
+            }
+        }
+
+        return GetFitness(game);
+    }
+
+    public static double GetFitness(Game game) {
+
+        // return .6 * game.m_maxTile + .3 * game.m_score + .1 *game.m_numMoves;
+        return .6 * game.m_score + .3 * game.m_maxTile + .1 *game.m_numMoves;
+
+        // return game.m_maxTile + game.m_score + game.m_numMoves;
+        // return game.m_score;
+
+
+        // double fitness = 0;
+        // // double fitness = game.m_maxTile;
+        // // double fitness = game.m_score;
+        // // double fitness = game.m_score + game.m_numMoves;
+        // // double fitness = game.m_maxTile + game.m_score + game.m_numMoves;
+
+        // for(int y1 = 0; y1 < Game.kBoardHeight; ++y1) {
+        //     for(int x1 = 0; x1 < Game.kBoardWidth; ++x1) {
+                
+        //         int tile1 = game.GetTile(x1, y1);
+        //         int tile1Bits = GetHighestBit(tile1);
+
+        //         double tileFitness = Game.kBoardSize * tile1;
+        //         for(int y2 = 0; y2 < Game.kBoardHeight; ++y2) {
+        //             int absDY = (y2 > y1) ? (y2 - y1) : (y1 - y2);
+                    
+        //             for(int x2 = 0; x2 < Game.kBoardWidth; ++x2) {
+
+        //                 // skip over ourselves
+        //                 if(y1 == y2 && x1 == x2) continue;
+
+        //                 int tile2 = game.GetTile(x2, y2);
+        //                 int tile2Bits = GetHighestBit(tile2);
+
+        //                 int absDX = (x2 > x1) ? (x2 - x1) : (x1 - x2);
+        //                 int tileDistance = absDX + absDY;
+
+        //                 int bitDistance = (tile2Bits > tile1Bits) ? (tile2Bits - tile1Bits) : (tile1Bits - tile2Bits);
+                        
+        //                 int absDT = (tile2 > tile1) ? (tile2 - tile1) : (tile1 - tile2);
+
+        //                 final int kMaxTileDistance = Game.kBoardHeight + Game.kBoardWidth;
+        //                 // final int kMaxBitDistance = 15;
+                        
+        //                 double penalty = (double)(absDT * (1 << tileDistance)) / ((1 << bitDistance) * (1 << kMaxTileDistance));
+
+        //                 tileFitness-= penalty;
+        //             }
+        //         }
+
+        //         fitness+= tileFitness;
+        //     }
+        // }
+
+        // return fitness;
+    }
+    
+    public double MutateWeight(double weight, double mutationRange) {
+        return weight + weight * (2*mutationRange * m_random.nextDouble() - mutationRange);
+    }
+    
+    public void Mutate(double mutationProbability, double mutationRange) {
+
+        for(Layer layer : m_network.m_layers) {
+
+            for(Neuron neuron : layer.m_neurons) {
+
+                for(int i = 0; i < neuron.m_weights.length; ++i) {
+                    if(m_random.nextDouble() < mutationProbability) {
+                        neuron.m_weights[i] = MutateWeight(neuron.m_weights[i], mutationRange);
+                    }
+                }
+            }
+        }
+    }
+
+    public void MakeChild(GeneticAlgorithm p1, GeneticAlgorithm p2, double mutationProbability, double mutationRange) {
+
+        for(int l = 0; l < m_network.m_layers.length; ++l) {
+            Layer layer   = m_network.m_layers[l];
+            Layer p1Layer = p1.m_network.m_layers[l];
+            Layer p2Layer = p2.m_network.m_layers[l];
+
+            for(int n = 0; n < layer.m_neurons.length; ++n) {
+                Neuron neuron   = layer.m_neurons[n];
+                Neuron p1Neuron = p1Layer.m_neurons[n];
+                Neuron p2Neuron = p2Layer.m_neurons[n];
+                
+                for(int w = 0; w < neuron.m_weights.length; ++w) {
+
+                    // coin flip for parent neuron to inherit from
+                    Neuron inheritedNeuron = m_random.nextBoolean() ? p1Neuron : p2Neuron;
+                    double inheritedWeight = inheritedNeuron.m_weights[w];
+                    
+                    neuron.m_weights[w] = (m_random.nextDouble() < mutationProbability) ? MutateWeight(inheritedWeight, mutationRange) : inheritedWeight;
+                }
+            }
+        }
+    }
+
+    public static class GameStats {
+        double fitness  = 0;
+        int gameScore   = 0;
+        int gameMoves   = 0;
+        int gameMaxTile = 0;
+
+        public void Set(int value) {
+            fitness     = value;
+            gameScore   = value;
+            gameMoves   = value;
+            gameMaxTile = value;
+        }
+    }
+
+    public static class GameWorkerResult {
+        GameStats min   = new GameStats();
+        GameStats max   = new GameStats();
+        GameStats total = new GameStats();
+
+        public GameWorkerResult() {
+            Clear();
+        }
+
+        public void Clear() {
+            min.Set(Integer.MAX_VALUE);
+            max.Set(0);
+            total.Set(0);
+        }
+
+    }
+
+    public static class GameWorker implements Callable<Object> {
+        int m_id;
+        long m_gameSeed;
+        Network m_network;
+        GameWorkerResult[] m_results;
+
+        public GameWorker(int id, GameWorkerResult[] results, long gameSeed, Network network) {
+            m_id = id;
+            m_gameSeed = gameSeed;
+            m_network = network;
+            m_results = results;
+        }
+
+        @Override
+        public Object call() {
+            Game game = new Game(m_gameSeed);
+            GameWorkerResult result = m_results[m_id];
+
+            double fitness = PlayGame(game, m_network, 0, true);
+
+            if(fitness         < result.min.fitness)     result.min.fitness = fitness;
+            if(game.m_score    < result.min.gameScore)   result.min.gameScore = game.m_score;
+            if(game.m_numMoves < result.min.gameMoves)   result.min.gameMoves = game.m_numMoves;
+            if(game.m_maxTile  < result.min.gameMaxTile) result.min.gameMaxTile = game.m_maxTile;
+
+            if(fitness         > result.max.fitness)     result.max.fitness = fitness;
+            if(game.m_score    > result.max.gameScore)   result.max.gameScore = game.m_score;
+            if(game.m_numMoves > result.max.gameMoves)   result.max.gameMoves = game.m_numMoves;
+            if(game.m_maxTile  > result.max.gameMaxTile) result.max.gameMaxTile = game.m_maxTile;
+
+            result.total.fitness+= fitness;
+            result.total.gameScore+= game.m_score;
+            result.total.gameMoves+= game.m_numMoves;
+            result.total.gameMaxTile+= game.m_maxTile;
+
+            return null;
+        }
+    }
+
+    public static class Demographic {
+        Random m_random;
+
+        GeneticAlgorithm[] m_algorithms;
+        Integer[] m_algorithmIndices;
+
+        long[] m_trainingSeeds;
+        int[] m_batchTrainingIndicies;
+
+        GameWorker[] m_algorithmWorkers;
+        GameWorkerResult[] m_algorithmResults;
+
+        public Demographic(long seed, int numAlgorithms, int[] layerWidths, int trainingSize) {
+
+            m_random = new Random(seed);
+
+            // create training data
+            m_trainingSeeds = new long[trainingSize];
+            m_batchTrainingIndicies = new int[trainingSize];
+
+            for(int i = 0; i < trainingSize; ++i) {
+                m_trainingSeeds[i] = m_random.nextLong();
+                m_batchTrainingIndicies[i] = i;
+            }
+
+            // create algorithms
+            m_algorithms       = new GeneticAlgorithm[numAlgorithms];
+            m_algorithmIndices = new Integer[numAlgorithms];
+            m_algorithmWorkers = new GameWorker[numAlgorithms];
+
+
+            // TODO: Can this just be part of the GameWorker?
+            m_algorithmResults = new GameWorkerResult[numAlgorithms];
+
+            for(int i = 0; i < numAlgorithms; ++i) {
+
+                long algorithmSeed = m_random.nextLong();
+                GeneticAlgorithm algorithm = new GeneticAlgorithm(algorithmSeed, layerWidths);
+                
+                m_algorithms[i] = algorithm;
+                m_algorithmIndices[i] = i;
+                m_algorithmWorkers[i] = new GameWorker(i, m_algorithmResults, seed, algorithm.m_network);
+            }
+        }
+
+        protected int computeBatch(int batchSize) {
+            // Computes a random batch of 'batchSize' training from m_batchTrainingIndicies
+            // the random indices are placed at the end of the m_batchTrainingIndicies array
+            // Returns the first index of batch in m_batchTrainingIndicies 
+            // Requires 'batchSize' in range [0, m_batchTrainingIndicies.length]
+            
+            for(int i = 0; i < batchSize; ++i) {
+                // sample random trainingIndex without replacement
+                int sampleSize          = m_batchTrainingIndicies.length - i;
+                int sampleIndex         = m_random.nextInt(sampleSize);
+                int sampleTrainingIndex = m_batchTrainingIndicies[sampleIndex];
+                
+                // swap random sample at the tail of the array
+                int tailSampleIndex   = sampleSize - 1;
+                int tailTrainingIndex = m_batchTrainingIndicies[tailSampleIndex];
+                
+                m_batchTrainingIndicies[sampleIndex]     = tailTrainingIndex;
+                m_batchTrainingIndicies[tailSampleIndex] = sampleTrainingIndex;
+            }
+            
+            return m_batchTrainingIndicies.length - batchSize;
+        }
+
+        public void ScheduleTraining(int gameWorkerOffset, int batchSize) {
+            
+            int maxBatchSize = m_batchTrainingIndicies.length;
+            if(batchSize > maxBatchSize) {
+                batchSize = maxBatchSize;
+            }
+            
+            int batchStartIndex = computeBatch(batchSize);
+
+            // configure gameWorkers
+            for(int i = 0; i < batchSize; ++i) {
+                
+                int trainingIndex = m_batchTrainingIndicies[batchStartIndex + i];
+                long gameSeed = m_trainingSeeds[trainingIndex];
+
+
+                // TODO: Make sure this indexes right... alos should m_gameSeed be Integer pointer?
+                // GameWorker gameWorker = m_algorithmWorkers[i];
+                // gameWorker.m_gameSeed = gameSeed;
+            }
+        }
+
+
+        
+    }
+
+    // public static class Population {
+    //     Random random;
+
+    //     int numAlgorithms       = 1000;
+    //     int trainingsPerBatch   = 10;
+        
+    //     int trainingSetSize     = 3;
+    //     int batchSize           = Math.min(trainingSetSize, 2);
+
+    //     double survivalRate     = .1;
+    //     double mutationRate     = .05;
+        
+    //     double mutationRange = 1;
+    //     double mutationProbability = .05;
+    //     double crossoverMutationProbability = .1;
+
+    //     // double extinctionRate = .05;
+    //     double extinctionRate = 0;
+    //     double extinctionSurvivalRate = .01;
+
+    //     double luckRate = .01;
+
+    //     public Population(long randomSeed, int[] layerWidths) {
+
+    //         random = new Random(8264);
+
+            
+    //         int survivalCount           = (int)(survivalRate * numAlgorithms);
+    //         int mutationCount           = (int)(mutationRate * (numAlgorithms - survivalCount));
+    //         int extinctionSurvivalCount = (int)(extinctionSurvivalRate * numAlgorithms);
+            
+    //         int crossoverOffset = survivalCount + mutationCount;
+
+            
+    //         // create training data
+    //         long[] trainingGameSeeds = new long[trainingSetSize];
+    //         for(int i = 0; i < trainingSetSize; ++i) {
+    //             trainingGameSeeds[i] = random.nextLong();
+    //         }
+
+    //         int[] batchTrainingIndicies = new int[trainingSetSize];
+    //         for(int i = 0; i < trainingSetSize; ++i) {
+    //             batchTrainingIndicies[i] = i;
+    //         }
+    // }
+
+    public static void main(String[] args) {
+
+        Random random = new Random(8264);
+
+        int numThreads          = 14;
+        // int numThreads          = 1;
+        int outputStride        = 10;
+
+        int numAlgorithms       = 1000;
+        // int numEpocs            = 1001;
+        int numEpocs            = 201;
+        int trainingsPerBatch   = 10;
+        
+        // int trainingSetSize  = 101;
+        // int trainingSetSize  = 100;
+        int trainingSetSize  = 3;
+        int batchSize        = 2;
+        if(batchSize > trainingSetSize) {
+            batchSize = trainingSetSize;
+        }
+
+        int testDemoSize     = 1;
+        int trainingDemoSize = 1;
+        int demoDelayMs      = 10;
+
+        double survivalRate     = .1;
+        double mutationRate     = .05;
+        
+        double mutationRange = 1;
+        // double mutationProbability = .05;
+        double mutationProbability = .05;
+        double crossoverMutationProbability = .1;
+
+        // double extinctionRate = .05;
+        double extinctionRate = 0;
+        double extinctionSurvivalRate = .01;
+
+        double luckRate = .01;
+
+
+        // int[] layerWidths = {8, 4, 4};
+        int[] layerWidths = {8, 8, 4, 4};
+        // int[] layerWidths = {16, 10, 10, 10, 4};
+
+        // int[] layerWidths = {8, 6, 4};
+        // int[] layerWidths = {16, 8, 4};
+        // int[] layerWidths = {10, 8, 6, 4};
+
+        // int[] layerWidths = {32, 4};
+        // int[] layerWidths = {4};
+        // int[] layerWidths = {8, 4, 4};        
+        // int[] layerWidths = {8, 8, 4, 4};
+        // int[] layerWidths = {8, 4};
+        // int[] layerWidths = {8, 8, 4};
+        // int[] layerWidths = {8, 8, 4, 4};
+        // int[] layerWidths = {8, 16, 4};
+        
+        // int[] layerWidths = {16, 10, 10, 10, 4};
+
+        int survivalCount           = (int)(survivalRate * numAlgorithms);
+        int mutationCount           = (int)(mutationRate * (numAlgorithms - survivalCount));
+        int extinctionSurvivalCount = (int)(extinctionSurvivalRate * numAlgorithms);
+        
+        int crossoverOffset = survivalCount + mutationCount;
+
+        
+        // create training data
+        long[] trainingGameSeeds = new long[trainingSetSize];
+        for(int i = 0; i < trainingSetSize; ++i) {
+            trainingGameSeeds[i] = random.nextLong();
+        }
+
+        int[] batchTrainingIndicies = new int[trainingSetSize];
+        for(int i = 0; i < trainingSetSize; ++i) {
+            batchTrainingIndicies[i] = i;
+        }
+
+        // create algorithms
+        GeneticAlgorithm[] algorithms = new GeneticAlgorithm[numAlgorithms];
+        Integer[] sortedAlgorithmIndices = new Integer[numAlgorithms];
+
+        ExecutorService gameWorkerPool = Executors.newFixedThreadPool(numThreads);
+        ArrayList<GameWorker> gameWorkers = new ArrayList<>(numAlgorithms);
+        GameWorkerResult[] algorithmResults = new GameWorkerResult[numAlgorithms];        
+
+        for(int i = 0; i < numAlgorithms; ++i) {
+
+            long geneticSeed = random.nextLong();
+            GeneticAlgorithm algorithm = new GeneticAlgorithm(geneticSeed, layerWidths);
+            
+            algorithms[i] = algorithm;
+            sortedAlgorithmIndices[i] = i;
+
+            algorithmResults[i] = new GameWorkerResult();
+            gameWorkers.add(new GameWorker(i, algorithmResults, 0, algorithm.m_network));
+        }
+
+
+        // create draw window
+        NetworkDrawer networkDrawer = new NetworkDrawer("Best Network");
+
+        String[] inputNames = new String[Game.kBoardSize];
+        for(int y = 0; y < Game.kBoardHeight; ++y) {
+            for(int x = 0; x < Game.kBoardWidth; ++x) {
+                inputNames[y*Game.kBoardWidth + x] = x+","+y;
+            }
+        }
+        
+        final int kNumDirections = kDirections.length;
+        String[] outputNames = new String[kNumDirections];
+        Color[] outputColors = new Color[kNumDirections];
+        for(int i = 0; i < kNumDirections; ++i) {
+            outputNames[i] = kDirections[i].name();
+            
+            float colorHue = i/(float)kNumDirections;
+            outputColors[i] = Color.getHSBColor(colorHue, 1, 1);
+        }
+        
+        // Create Training Graphs
+        // Note: +1 for the avg graph
+        int numGraphs = trainingSetSize + 1;
+        int graphPlotsPerEpoch = numEpocs * trainingsPerBatch;
+        double[] trainingFitnesses = new double[numGraphs * graphPlotsPerEpoch];
+        NetworkDrawer.GraphPanel[] trainingGraphs = new NetworkDrawer.GraphPanel[numGraphs];
+        for(int i = 0; i < numGraphs; ++i) {
+
+            int startIndex = i * graphPlotsPerEpoch;
+            int endIndex = startIndex;
+
+            String graphName;
+            Color graphColor;
+
+            if(i < trainingSetSize) {
+                graphName = "T: " + i; 
+                graphColor = Color.GRAY;
+            } else {
+                graphName = "AVG";
+                graphColor = Color.CYAN;
+            }
+
+            NetworkDrawer.GraphPanel graphPanel = networkDrawer.AddGraph(graphName, graphPlotsPerEpoch, trainingFitnesses, startIndex, endIndex);
+
+            graphPanel.m_color = graphColor;
+
+            graphPanel.m_xMin = 0;
+            graphPanel.m_xMax = graphPlotsPerEpoch;
+
+            graphPanel.m_yMin = Double.MAX_VALUE;
+            graphPanel.m_yMax = Double.MIN_VALUE;
+
+            trainingGraphs[i] = graphPanel;
+        }
+        
+        // train algorithms
+        for(int epoch = 0; epoch < numEpocs; ++epoch) {
+
+            // compute batch
+            for(int i = 0; i < batchSize; ++i) {
+
+                // select random trainingIndex without replacement 
+                int sampleSize = trainingSetSize - i;
+                int sampleIndex = random.nextInt(sampleSize);
+                int newTrainingIndex = batchTrainingIndicies[sampleIndex];
+                
+                // 'remove' trainingIndex from next batch sample 
+                int lastSampleIndex = sampleSize - 1;
+                int lastTrainingIndex = batchTrainingIndicies[lastSampleIndex];
+                batchTrainingIndicies[sampleIndex] = lastTrainingIndex;
+                batchTrainingIndicies[lastSampleIndex] = newTrainingIndex;
+
+                // highlight new batch and unhighlight last batch
+                NetworkDrawer.GraphPanel lastBatchGraph = trainingGraphs[lastTrainingIndex];
+                NetworkDrawer.GraphPanel newBatchGraph  = trainingGraphs[newTrainingIndex];
+
+                lastBatchGraph.m_color = Color.GRAY;
+                newBatchGraph.m_color = Color.WHITE;
+            }
+            int batchOffset = trainingSetSize - batchSize;
+
+            for(int t = 0; t < trainingsPerBatch; ++t) {
+           
+                // evaluate batch
+                for(int b = 0; b < batchSize; ++b) {
+                    
+                    int trainingIndex = batchTrainingIndicies[batchOffset + b];
+                    long gameSeed = trainingGameSeeds[trainingIndex];
+
+                    // TOOD: replace this with Integer pointer?
+                    for(GameWorker gameWorker : gameWorkers) {
+                        gameWorker.m_gameSeed = gameSeed;
+                    }
+
+                    // evaluate games
+                    try {
+                        gameWorkerPool.invokeAll(gameWorkers);
+                    } catch (InterruptedException e) {
+                        e.printStackTrace();
+                        System.exit(1);
+                    }
+                }
+                
+                // sort algorithms by fitness in descending order
+                Arrays.sort(sortedAlgorithmIndices, (Integer index1, Integer index2) -> {
+                    double fitness1 = algorithmResults[index1].total.fitness;
+                    double fitness2 = algorithmResults[index2].total.fitness;
+
+                    if(fitness1 == fitness2) {
+                        fitness1 = algorithmResults[index1].min.fitness;
+                        fitness2 = algorithmResults[index2].min.fitness;                    
+                    }
+
+                    if(fitness1 == fitness2) {
+                        fitness1 = algorithmResults[index1].max.fitness;
+                        fitness2 = algorithmResults[index2].max.fitness;                    
+                    }                
+
+                    return (fitness1 > fitness2) ? -1 :
+                        (fitness1 < fitness2) ?  1 : 0;
+                });
+
+                int bestAlgorithmIndex = sortedAlgorithmIndices[0];
+                GeneticAlgorithm bestAlgorithm = algorithms[bestAlgorithmIndex];
+
+                // TODO: update training results for tests all tests? 
+                //       or should we just the results for the current bactch?
+                // TODO: add different population that train on subset of data
+                //       plot the performance of the top performing algorithm from each population
+                //       against each other population group
+                {
+
+                    // TODO: Hacky code just to make sure things are working... make this parallel
+                    double totalFitness = 0;
+                    for(int i = 0; i < trainingSetSize; ++i) {
+                        NetworkDrawer.GraphPanel graph = trainingGraphs[i];
+                        long gameSeed = trainingGameSeeds[i];
+                        
+                        Game game = new Game(gameSeed);
+                        double gameFitness = PlayGame(game, bestAlgorithm.m_network, 0, false);
+                    
+                        if(gameFitness < graph.m_yMin) {
+                            graph.m_yMin = gameFitness;
+                        }
+                    
+                        if(gameFitness > graph.m_yMax) {
+                            graph.m_yMax = gameFitness;
+                        }
+
+                        graph.m_data[graph.m_dataEndIndex++] = gameFitness;
+                    
+                        totalFitness+= gameFitness;
+                    }
+                    double avgFitness = (totalFitness != 0) ? (totalFitness / trainingSetSize) : 0;
+
+                    // update avg graph
+                    NetworkDrawer.GraphPanel graph = trainingGraphs[trainingSetSize];
+                    if(avgFitness < graph.m_yMin) {
+                        graph.m_yMin = avgFitness;
+                    }
+                
+                    if(avgFitness > graph.m_yMax) {
+                        graph.m_yMax = avgFitness;
+                    }
+
+                    graph.m_data[graph.m_dataEndIndex++] = avgFitness;
+
+                    
+                    // use a seperate pool for evaluating the training set w/current parent?
+                    // or should we just reuse existing pool and swap out results array?
+
+                    // can we just output directly into trainingResults with the correct epoch offset?
+
+                    // evaluate all training games in parallel
+
+                    // add the update the results for the graphs
+                }
+
+                boolean shouldPrintStats = (((epoch * trainingsPerBatch + t) % outputStride) == 0);
+                if(shouldPrintStats) {
+                    GameWorkerResult parent1Results = algorithmResults[bestAlgorithmIndex];
+
+                    double batchNormalizer   = 1.0 / batchSize;
+                    double parent1Avgfitness = parent1Results.total.fitness * batchNormalizer;
+                    double parent1AvgGame    = parent1Results.total.gameScore * batchNormalizer;
+                    double parent1AvgMaxTile = parent1Results.total.gameMaxTile * batchNormalizer;
+                    double parent1AvgMoves   = parent1Results.total.gameMoves * batchNormalizer;
+
+                    System.out.printf("[E: %4d - %2d, A: %3d] | AVG: [F: %8.02f, G: %7.02f, T: %7.02f, M: %7.02f] | MIN: [F: %8.02f, G: %5d, T: %4d, M: %4d] | MAX: [F: %8.02f, G: %5d, T: %4d, M: %4d]\n",
+                        epoch, t, bestAlgorithmIndex,
+                        parent1Avgfitness, parent1AvgGame, parent1AvgMaxTile, parent1AvgMoves,
+                        parent1Results.min.fitness, parent1Results.min.gameScore, parent1Results.min.gameMaxTile, parent1Results.min.gameMoves,
+                        parent1Results.max.fitness, parent1Results.max.gameScore, parent1Results.max.gameMaxTile, parent1Results.max.gameMoves
+                    );
+                }
+
+                networkDrawer.SetNetwork(bestAlgorithm.m_network, inputNames, outputNames, outputColors);
+
+                boolean isLastIteration = ((epoch == (numEpocs-1)) && (t == (trainingsPerBatch-1)));
+                if(isLastIteration) {
+                    // just evaluate the algorithms, don't update them 
+                    break;
+                }
+
+                boolean isExtinctionEvent = (random.nextDouble() < extinctionRate);
+
+                int numSurvivors;
+                if(isExtinctionEvent) {
+                    System.out.printf("Epoch: %4d | MASS EXTINCTION TRIGGERED\n", epoch);
+                    numSurvivors = extinctionSurvivalCount;
+                } else {
+                    numSurvivors = survivalCount;
+                }
+                
+                // Note: we skip over modifying survivors 
+                for(int i = numSurvivors; i < numAlgorithms; ++i) {
+                    int algorithmIndex = sortedAlgorithmIndices[i];
+                    GeneticAlgorithm algorithm = algorithms[algorithmIndex];
+
+                    if(isExtinctionEvent) {
+
+                        // replace all nonsurviviors with new networks
+                        algorithm.m_network.Reset(algorithm.m_random);
+
+                    } else {
+
+                        boolean isLucky = random.nextDouble() < luckRate;
+                        if(isLucky) {
+
+                            // congrats! make a child with the best algorithm
+                            algorithm.MakeChild(algorithm, bestAlgorithm, crossoverMutationProbability, mutationRange); 
+
+                        } else if(i < crossoverOffset) {
+        
+                            // mutate top performing algorithms 
+                            algorithm.Mutate(mutationProbability, mutationRange);
+        
+                        } else {
+
+                            // replace remaining low performing algorithms with children of best algorithms
+                            int p1Index = sortedAlgorithmIndices[random.nextInt(numSurvivors)];
+                            int p2Index = sortedAlgorithmIndices[random.nextInt(numSurvivors)];
+
+                            GeneticAlgorithm p1 = algorithms[p1Index];
+                            GeneticAlgorithm p2 = algorithms[p2Index];
+
+                            algorithm.MakeChild(p1, p2, crossoverMutationProbability, mutationRange);
+                            // algorithm.MakeChild(parent1, parent2, crossoverMutationProbability, mutationRange);
+                            // algorithm.MakeChild(algorithm, parent1, crossoverMutationProbability, mutationRange);
+                        }
+                    }
+                }    
+            
+                // clear results for next batch
+                for(int i = 0; i < numAlgorithms; ++i) {
+                    algorithmResults[i].Clear();
+                }
+            }
+        }
+
+        // show a game using best model
+        int algorithmIndex = sortedAlgorithmIndices[0];
+        GeneticAlgorithm algorithm = algorithms[algorithmIndex];
+
+        // run ai on last training demos
+        for(int i = 0; i < trainingDemoSize; ++i) {
+            String title = "Training Demo: "+i;
+
+            // pull game seed from last trained batch which should perform the best
+            int trainingIndex = batchTrainingIndicies[trainingSetSize - 1];
+            long gameSeed = trainingGameSeeds[trainingIndex];
+
+            PlayDemo(title, algorithm.m_network, gameSeed, demoDelayMs);
+        }
+
+        // run ai on new demos
+        random.setSeed(9867);
+        for(int i = 0; i < testDemoSize; ++i) {
+            String title = "Test Demo: "+i;
+            PlayDemo(title, algorithm.m_network, random.nextLong(), demoDelayMs);
+        }
+
+        return;
+    }
+
+
+    public static void PlayDemo(String title, Network network, long gameSeed, int demoDelayMs) {
+        Game game = new Game(gameSeed);
+        game.Show(title);
+        PlayGame(game, network, demoDelayMs, true);
+    }
+}

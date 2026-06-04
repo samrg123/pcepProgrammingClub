@@ -1,20 +1,31 @@
 {
 	"folders": [
 		{
-			"path": "physicsSim"
-		},
-		{
-			"path": "sortingAnimations"
-		},
-		{
-			"path": "snake"
+			"path": "geneticAlgorithm2048"
 		},
 		{
 			"path": "particleSims"
 		},
 		{
+			"path": "physicsSim"
+		},
+		{
+			"path": "programmingLanguageComparison"
+		},
+		{
+			"path": "pyGameTemplate"
+		},
+		{
 			"path": "seamCarving"
-		}
+		},
+		{
+			"path": "snake"
+		},
+		{
+			"path": "sortingAnimations"
+		},
+		
+		
 	],
 	"settings": {
 		"terminal.integrated.env.windows": {

@@ -1011,8 +1011,12 @@ public class Main {
         Demographic m_demographic;
         GeneticAlgorithm m_algorithm;
 
-        public long m_resultBatchId = 0;
+        // TODO: should these be tracked inside GeneticAlgorithm?
+        public long m_algorithmId   = 0;
         public boolean m_invincible = false;
+
+        public long m_resultBatchId     = 0;
+        public long m_resultAlgorithmId = 0;
      
         public DemographicGameWorker(int id, GeneticAlgorithm algorithm, Demographic demographic) {
             super(id);
@@ -1022,10 +1026,23 @@ public class Main {
 
         @Override
         public Object call() {
-            boolean updateNeeded = m_demographic.m_workerForceUpdate || (m_resultBatchId != m_demographic.m_currentBatchId);
+            boolean updateNeeded = m_demographic.m_workerForceUpdate || 
+                                  (m_resultBatchId     != m_demographic.m_currentBatchId) ||
+                                  (m_resultAlgorithmId != m_algorithmId);
 
             if(Demographic.m_kDebugWorkers) {
-                System.out.println("Batch: "+m_demographic.m_currentBatchId+" - [Update: "+updateNeeded+" | force: "+m_demographic.m_workerForceUpdate+"] | gameSeed: "+m_demographic.m_workerTrainingSeed+" | Alg: "+m_id+" | resultBatchId: "+m_resultBatchId+" | updateResultBatchId: "+m_demographic.m_workerUpdateResultBatchId);
+                System.out.println(
+                    "Batch: " + m_demographic.m_currentBatchId +
+                    " - [Update: " + updateNeeded + 
+                    " | force: " + m_demographic.m_workerForceUpdate +
+                    "] | gameSeed: " + m_demographic.m_workerTrainingSeed +
+                    " | Alg: " + m_id +
+                    " | currentBatchId: " + m_demographic.m_currentBatchId +
+                    " | algorithmId: " + m_algorithmId +
+                    " | updateResultIds: " + m_demographic.m_workerUpdateResultIds +
+                    " | resultBatchId: " + m_resultBatchId +
+                    " | resultAlgorithmId: "+ m_resultAlgorithmId
+                );
             }
 
             if(!updateNeeded) return null;
@@ -1036,8 +1053,9 @@ public class Main {
 
             PlayGame(m_demographic.m_workerTrainingSeed, m_algorithm);
 
-            if(m_demographic.m_workerUpdateResultBatchId) {
-                m_resultBatchId = m_demographic.m_currentBatchId;
+            if(m_demographic.m_workerUpdateResultIds) {
+                m_resultBatchId     = m_demographic.m_currentBatchId;
+                m_resultAlgorithmId = m_algorithmId;
             }
             
             return null;
@@ -1072,7 +1090,6 @@ public class Main {
     }
 
     public static class Demographic {
-        static final long m_kDirtyBatchId    = -1;
         static final boolean m_kDebugWorkers = false;
 
         Random m_random;
@@ -1094,7 +1111,7 @@ public class Main {
         long m_workerTrainingSeed;
         boolean m_workerForceUpdate        = false;
         boolean m_workerClearResults        = false;
-        boolean m_workerUpdateResultBatchId = false;
+        boolean m_workerUpdateResultIds = false;
 
         public Demographic(long seed, DemographicParameters params) {
             m_random     = new Random(seed);
@@ -1201,7 +1218,7 @@ public class Main {
                 // Evaluate all algorithms with same game batch seed
                 int trainingIndex           = m_batchTrainingIndices[batchStartIndex + i];
                 m_workerTrainingSeed        = gameSeeds[trainingIndex];                
-                m_workerUpdateResultBatchId = (i == lastI);
+                m_workerUpdateResultIds = (i == lastI);
 
                 GameWorker.Invoke(threadPool, m_gameWorkers);
             
@@ -1237,7 +1254,7 @@ public class Main {
                     // ignore invincible workers
                     if(worker.m_invincible) continue;
 
-                    worker.m_resultBatchId = m_kDirtyBatchId;
+                    ++worker.m_algorithmId;
                     worker.m_algorithm.Reset();
                 }
             
@@ -1253,8 +1270,7 @@ public class Main {
                     // ignore invincible workers
                     if(worker.m_invincible) continue;
 
-                    worker.m_resultBatchId = m_kDirtyBatchId;
-                    
+                    ++worker.m_algorithmId;
                     GeneticAlgorithm algorithm = worker.m_algorithm;
                     
                     boolean isLucky = m_random.nextDouble() < trainParams.luckRate;
@@ -1316,7 +1332,7 @@ public class Main {
         DemographicGameWorker m_demographicGameWorker;
         Population m_population;
 
-        long m_resultBatchId = 0;
+        long m_resultAlgorithmId = 0;
 
         public PopulationGameWorker(int id, Population population, DemographicGameWorker demographicGameWorker) {
             super(id);
@@ -1329,7 +1345,7 @@ public class Main {
         public Object call() {
 
             // algorithm hasn't changed reuse cached result (training data is constant)
-            if(m_resultBatchId == m_demographicGameWorker.m_resultBatchId) return null;
+            if(m_resultAlgorithmId == m_demographicGameWorker.m_resultAlgorithmId) return null;
 
             if(m_population.m_workerCopyDemographicResults) {
 
@@ -1340,20 +1356,10 @@ public class Main {
 
             // add our game results update the cached result
             PlayGame(m_population.m_workerGameSeed, m_demographicGameWorker.m_algorithm);
-            
-
-            // TODO: HERERERER!!!! ---
-            //       we shouldn't track result batch ID because the algorithm can get
-            //       get marked dirty, and then re-evaluated on same batch... instead we
-            //       should track a new algorithmID that gets set every time we modify an
-            //       algorithm. Demographics can still use the batchID to avoid recomputes
-            //       of results on same batches, and population can use it to prevent recomputes
-            //       of results of all training data!  
-            if(m_population.m_workerUpdateResultBatchId) {
-
-                // m_resultBatchId = m_demographicGameWorker.m_resultBatchId;
-                // System.out.println("BID: "+m_resultBatchId);
-            }
+             
+            if(m_population.m_workerUpdateResultIds) {
+                m_resultAlgorithmId = m_demographicGameWorker.m_resultAlgorithmId;
+             }
 
             return null;
         }
@@ -1368,7 +1374,7 @@ public class Main {
 
         ArrayList<PopulationGameWorker>[] m_gameWorkerArrays;
         boolean m_workerCopyDemographicResults;
-        boolean m_workerUpdateResultBatchId;
+        boolean m_workerUpdateResultIds;
         long m_workerGameSeed;
 
         // TODO: replace this with a sorted array of all gameWorkers that we maintain
@@ -1476,7 +1482,8 @@ public class Main {
             }
         }
 
-        // TODO: should this return a GameWorker so we also have the performance of it?
+        // TODO: Should this return PopulationGameWorker? or should we just Train
+        //       in tight loop and query have a separate GetBestGameWorker similar to demographic? 
         public PopulationGameWorker Train(PopulationTrainingParameters trainParams) {
 
             // Unhighlight population graph 
@@ -1553,7 +1560,7 @@ public class Main {
                     GeneticAlgorithm child   = childWorker.m_algorithm; 
 
                     child.MakeChild(parent1, parent2, trainParams.crossbreedMutationRate, trainParams.crossbreedMutationRange);
-                    childWorker.m_resultBatchId = Demographic.m_kDirtyBatchId;
+                    ++childWorker.m_algorithmId;
                 }            
             }
 
@@ -1590,8 +1597,8 @@ public class Main {
                     
                     m_invincibleGameWorker = worker2;
 
-                    worker1.m_resultBatchId = Demographic.m_kDirtyBatchId;
-                    worker2.m_resultBatchId = Demographic.m_kDirtyBatchId;
+                    ++worker1.m_algorithmId;
+                    ++worker2.m_algorithmId;
                 }    
             }
             
@@ -1642,7 +1649,7 @@ public class Main {
                 demographic.GetBestGameWorker();
 
                 // enable caching results on last GameWorker.Invoke
-                m_workerUpdateResultBatchId = (m_parameters.numDemographics == 1);
+                m_workerUpdateResultIds = (m_parameters.numDemographics == 1);
 
                 // Initialize iGameWorkers results from with demographic i's training data results
                 m_workerCopyDemographicResults = true;
@@ -1665,7 +1672,7 @@ public class Main {
                         // TODO: is there a cleaner way to do this
                         //       this technically breaks / disables caching if lastDemographic doesn't have any training data
                         //       (which shouldn't happen, but still)
-                        m_workerUpdateResultBatchId = ((j == lastInvokedJ) && (seedIndex == lastSeedIndex));
+                        m_workerUpdateResultIds = ((j == lastInvokedJ) && (seedIndex == lastSeedIndex));
 
                         // if(m_workerUpdateResultBatchId) {
                         //     System.out.println("I - i:"+i+" | j:"+j+" | s:"+seedIndex);
@@ -1677,7 +1684,7 @@ public class Main {
                         GameWorker.Invoke(m_parameters.threadPool, iGameWorkers);
                     }
                                 
-                    m_workerUpdateResultBatchId = false;
+                    m_workerUpdateResultIds = false;
                 }
 
                 // get the best result
@@ -1947,31 +1954,28 @@ public class Main {
 
         ai.Train(aiTrainingParams);
 
+        // TODO: run games
+        // // show a game using best model
+        // int algorithmIndex = sortedAlgorithmIndices[0];
+        // GeneticAlgorithm algorithm = algorithms[algorithmIndex];
 
-        // TODO: run demos from training set and test sets
-        //     // show a game using best model
-        //     int algorithmIndex = sortedAlgorithmIndices[0];
-        //     GeneticAlgorithm algorithm = algorithms[algorithmIndex];
+        // // run ai on last training demos
+        // int trainingDemoSize = min();
+        // for(int i = 0; i < trainingDemoSize; ++i) {
+        //     String title = "Training Demo: "+i;
 
-        //     // run ai on last training demos
-        //     for(int i = 0; i < trainingDemoSize; ++i) {
-        //         String title = "Training Demo: "+i;
+        //     // pull game seed from last trained batch which should perform the best
+        //     int trainingIndex = batchTrainingIndices[trainingSetSize - 1];
+        //     long gameSeed = trainingGameSeeds[trainingIndex];
 
-        //         // pull game seed from last trained batch which should perform the best
-        //         int trainingIndex = batchTrainingIndices[trainingSetSize - 1];
-        //         long gameSeed = trainingGameSeeds[trainingIndex];
+        //     PlayDemo(title, algorithm.m_network, gameSeed, demoDelayMs);
+        // }
 
-        //         PlayDemo(title, algorithm.m_network, gameSeed, demoDelayMs);
-        //     }
-
-        //     // run ai on new demos
-        //     random.setSeed(9867);
-        //     for(int i = 0; i < testDemoSize; ++i) {
-        //         String title = "Test Demo: "+i;
-        //         PlayDemo(title, algorithm.m_network, random.nextLong(), demoDelayMs);
-        //     }
-
-        //     return;
+        // // run ai on new demos
+        // random.setSeed(9867);
+        // for(int i = 0; i < testDemoSize; ++i) {
+        //     String title = "Test Demo: "+i;
+        //     PlayDemo(title, algorithm.m_network, random.nextLong(), demoDelayMs);
         // }
 
     }

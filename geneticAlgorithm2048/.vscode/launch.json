@@ -7,7 +7,7 @@
 
         {
             "type": "java",
-            "name": "Current File",
+            "name": "Main.java",
             "request": "launch",
             "mainClass": "${workspaceFolder}/Main.java"
         }

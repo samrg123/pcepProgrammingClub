@@ -6,6 +6,7 @@ import java.awt.Graphics;
 import java.awt.GridLayout;
 import java.awt.Rectangle;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Random;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
@@ -151,7 +152,7 @@ public class Main {
             
             // eval intermediate layers into outputs
             // Note: we offset the input and output because we cannot call Eval with same input and output location.
-            //       If we did input will be partialally overwritten during neuron eval calls
+            //       If we did input will be partially overwritten during neuron eval calls
             int inputReadOffset = 0;
             int outputWriteOffset = 0;
             int lastLayerIndex = m_layers.length - 1;
@@ -235,7 +236,7 @@ public class Main {
 
             // Note: the normalized significance of each neuron in a layer relative to each final output neuron
             //       we preallocate a significance array bit enough to fit the output layer and the next computed input layer   
-            //       and update relavent indicies as needed. Values are initialized for a 1 hot encoding for last output layer
+            //       and update relevant indices as needed. Values are initialized for a 1 hot encoding for last output layer
             int outputSize = m_network.m_outputSize;
             int significancesStride = m_network.m_maxNumLayerWeights * outputSize;
             double[] significances = new double[2 * significancesStride];
@@ -243,7 +244,7 @@ public class Main {
                 significances[i*outputSize + i] = 1;
             };
             
-            // Note: we draw layers in reverse order to allow us to backpropigate significance
+            // Note: we draw layers in reverse order to allow us to backpropagate significance
             int outputLayerSignificanceOffset = 0;
             int lastLayerIndex = numLayers-1;
             for(int l = lastLayerIndex; l >= 0 ; --l) {
@@ -262,7 +263,7 @@ public class Main {
 
                 double neuronYOffset = layerYOffset + .5*neuronStride;
 
-                // zero initialize input signifcances
+                // zero initialize input significances
                 int inputLayerSignificanceOffset = (outputLayerSignificanceOffset == 0) ? significancesStride : 0;
                 int inputSignificanceSize = numInputs * outputSize;
                 for(int i = 0; i < inputSignificanceSize; ++i) {
@@ -296,11 +297,11 @@ public class Main {
                         graphics.setColor(weightColor);
                         graphics.drawLine(inputX, inputY, neuronX, neuronY);
 
-                        // update input neuron signficance
+                        // update input neuron significance
                         int inputSignificanceOffset = inputLayerSignificanceOffset + i*outputSize;
                         for(int o = 0; o < outputSize; ++o) {
-                            double outputSignficance = significances[neuronSignificanceOffset + o];
-                            significances[inputSignificanceOffset + o]+= outputSignficance * weightSignificance;
+                            double outputSignificance = significances[neuronSignificanceOffset + o];
+                            significances[inputSignificanceOffset + o]+= outputSignificance * weightSignificance;
                         }
 
                         // Note: we draw inputs on lastNeuronIndex so we can colorize it to match significance
@@ -470,8 +471,15 @@ public class Main {
             int fontSize = m_font.getSize();
 
             int    cursorX = m_cursorIndex - m_dataStartIndex;
-            double cursorY = (m_cursorIndex > m_dataStartIndex) ? m_data[m_cursorIndex] : 0;
-            String graphTitle = String.format("%s [%.01f, %.01f]: (%d, %.01f)", m_name, m_yMin, m_yMax, cursorX, cursorY);                
+            double cursorY = (m_dataEndIndex > m_dataStartIndex) ? m_data[m_cursorIndex] : 0;
+
+            double yMin = m_yMin;
+            double yMax = m_yMax;
+            if(yMin > yMax) {
+                yMin = 0;
+                yMax = 0;
+            }
+            String graphTitle = String.format("%s [%.01f, %.01f]: (%d, %.01f)", m_name, yMin, yMax, cursorX, cursorY);                
 
             graphics.setFont(m_font);
             graphics.drawString(graphTitle, m_padding, fontSize);
@@ -585,10 +593,10 @@ public class Main {
     //       ... or should we just use multiple windows?
     public static class NetworkGUI extends AppFrame {
 
-        public static final int kDeafultWindowWidth = 600;
-        public static final int kDefaultWindowHeight = 300;
+        public static final int kDefaultWindowWidth = 700;
+        public static final int kDefaultWindowHeight = 400;
         
-        public static final int kDefaultGraphWidth  = (int)(kDeafultWindowWidth * .4 + .5);
+        public static final int kDefaultGraphWidth  = (int)(kDefaultWindowWidth * .4 + .5);
         public static final int kDefaultGraphHeight = 50;
 
         protected GridLayout m_networkContainerLayout = new GridLayout(1,1);
@@ -598,14 +606,14 @@ public class Main {
 
         
         public NetworkGUI(String title) {
-            super(title, kDeafultWindowWidth, kDefaultWindowHeight);
+            super(title, kDefaultWindowWidth, kDefaultWindowHeight);
 
             m_contentPane.setLayout(new BoxLayout(m_contentPane, BoxLayout.X_AXIS));
 
             m_contentPane.add(m_networkContainer);
             m_contentPane.add(m_graphPane);
 
-            m_networkContainer.setPreferredSize(new Dimension(kDeafultWindowWidth - kDefaultGraphWidth, kDefaultWindowHeight));
+            m_networkContainer.setPreferredSize(new Dimension(kDefaultWindowWidth - kDefaultGraphWidth, kDefaultWindowHeight));
             m_graphPane.setPreferredSize(new Dimension(kDefaultGraphWidth, kDefaultWindowHeight));
         
             m_networkContainer.setBackground(Color.black);
@@ -632,7 +640,6 @@ public class Main {
 
             return graphPanel;
         }
-
     };
 
 
@@ -834,6 +841,13 @@ public class Main {
             m_fitness     = value;
         }
 
+        public void Set(GameStats stats) {
+            m_gameScore   = stats.m_gameScore;
+            m_gameMoves   = stats.m_gameMoves;
+            m_gameMaxTile = stats.m_gameMaxTile;
+            m_fitness     = stats.m_fitness;
+        }
+
         public void Add(GameStats stats) {
             m_gameScore   += stats.m_gameScore;
             m_gameMoves   += stats.m_gameMoves;
@@ -893,6 +907,12 @@ public class Main {
             total.Set(0);
         }
 
+        public void Set(GameWorkerResult result) {
+            min.Set(result.min);
+            max.Set(result.max);
+            total.Set(result.total);
+        }
+
         public void Add(Game game, double fitness) {
             min.Min(game, fitness);
             max.Max(game, fitness);
@@ -906,7 +926,7 @@ public class Main {
         }
     }
 
-    public static abstract class GameWorker implements Callable<Object> {
+    public static abstract class GameWorker implements Callable<Object>, Comparable<GameWorker> {
         int m_id;
         GameWorkerResult m_result = new GameWorkerResult();
 
@@ -914,6 +934,29 @@ public class Main {
             m_id = id;
         }
     
+        @Override
+        public int compareTo(GameWorker worker) {
+            GameWorkerResult results1 = m_result;
+            GameWorkerResult results2 = worker.m_result;
+            
+            double value1 = results1.total.m_fitness;
+            double value2 = results2.total.m_fitness;
+
+            // TODO: should we use total min/max tile for better ordering?
+            if(value1 == value2) {
+                value1 = results1.min.m_fitness;
+                value2 = results2.min.m_fitness;                    
+            }
+
+            if(value1 == value2) {
+                value1 = results1.max.m_fitness;
+                value2 = results2.max.m_fitness;                    
+            }
+
+            return (value1 > value2) ? -1 :
+                    (value1 < value2) ?  1 : 0;
+        }
+
         public Object PlayGame(long gameSeed, GeneticAlgorithm algorithm) {
             Game game = new Game(gameSeed);            
             double fitness = algorithm.PlayGame(game, 0, true);
@@ -939,30 +982,7 @@ public class Main {
 
         public static <T extends GameWorker> void Sort(ArrayList<T> gameWorkers) {
             // sort m_algorithmWorkers in descending order by results
-            
-            // TODO: Make this the standard comparison of GameWorkerResult
-            gameWorkers.sort((GameWorker worker1, GameWorker worker2) -> {
-                
-                GameWorkerResult results1 = worker1.m_result;
-                GameWorkerResult results2 = worker2.m_result;
-                
-                double value1 = results1.total.m_fitness;
-                double value2 = results2.total.m_fitness;
-
-                // TODO: should we use total min/max tile for better ordering?
-                if(value1 == value2) {
-                    value1 = results1.min.m_fitness;
-                    value2 = results2.min.m_fitness;                    
-                }
-
-                if(value1 == value2) {
-                    value1 = results1.max.m_fitness;
-                    value2 = results2.max.m_fitness;                    
-                }                
-
-                return (value1 > value2) ? -1 :
-                       (value1 < value2) ?  1 : 0;
-            });
+            Collections.sort(gameWorkers);
         }
         
         public static <T extends GameWorker> GameWorkerResult GetCumulativeResult(ArrayList<T> gameWorkers) {
@@ -988,18 +1008,39 @@ public class Main {
     }
 
     public static class DemographicGameWorker extends GameWorker {
+        Demographic m_demographic;
         GeneticAlgorithm m_algorithm;
-        LongPtr m_gameSeedPtr;
 
-        public DemographicGameWorker(int id, GeneticAlgorithm algorithm, LongPtr gameSeedPtr) {
+        public long m_resultBatchId = 0;
+        public boolean m_invincible = false;
+     
+        public DemographicGameWorker(int id, GeneticAlgorithm algorithm, Demographic demographic) {
             super(id);
+            m_demographic = demographic;
             m_algorithm   = algorithm;
-            m_gameSeedPtr = gameSeedPtr;
         }
 
         @Override
         public Object call() {
-            return PlayGame(m_gameSeedPtr.value, m_algorithm);
+            boolean updateNeeded = m_demographic.m_workerForceUpdate || (m_resultBatchId != m_demographic.m_currentBatchId);
+
+            if(Demographic.m_kDebugWorkers) {
+                System.out.println("Batch: "+m_demographic.m_currentBatchId+" - [Update: "+updateNeeded+" | force: "+m_demographic.m_workerForceUpdate+"] | gameSeed: "+m_demographic.m_workerTrainingSeed+" | Alg: "+m_id+" | resultBatchId: "+m_resultBatchId+" | updateResultBatchId: "+m_demographic.m_workerUpdateResultBatchId);
+            }
+
+            if(!updateNeeded) return null;
+
+            if(m_demographic.m_workerClearResults) {
+                m_result.Clear();
+            }
+
+            PlayGame(m_demographic.m_workerTrainingSeed, m_algorithm);
+
+            if(m_demographic.m_workerUpdateResultBatchId) {
+                m_resultBatchId = m_demographic.m_currentBatchId;
+            }
+            
+            return null;
         }
     }
 
@@ -1028,10 +1069,12 @@ public class Main {
         int    crossoverPoolSize;        
         double crossoverMutationRate;
         double crossoverMutationRange;
-
     }
 
     public static class Demographic {
+        static final long m_kDirtyBatchId    = -1;
+        static final boolean m_kDebugWorkers = false;
+
         Random m_random;
         DemographicParameters m_parameters;
 
@@ -1040,10 +1083,18 @@ public class Main {
 
         long[] m_trainingSeeds;
         int[] m_batchTrainingIndices;
+        
+        long m_currentBatchId; // monotonically increasing for each batch created
+        int m_currentBatchSize;
+        int m_currentBatchStartIndex;
 
         ArrayList<DemographicGameWorker> m_gameWorkers;
-        LongPtr m_workerTrainingSeedPtr = new LongPtr();
         boolean m_isGameWorkersSorted = false;
+
+        long m_workerTrainingSeed;
+        boolean m_workerForceUpdate        = false;
+        boolean m_workerClearResults        = false;
+        boolean m_workerUpdateResultBatchId = false;
 
         public Demographic(long seed, DemographicParameters params) {
             m_random     = new Random(seed);
@@ -1071,12 +1122,11 @@ public class Main {
                 m_algorithms[i] = algorithm;
                 m_algorithmIndices[i] = i;
                 
-                m_gameWorkers.add(new DemographicGameWorker(i, algorithm, m_workerTrainingSeedPtr));
+                m_gameWorkers.add(new DemographicGameWorker(i, algorithm, this));
             }
         }
 
         public void SortGameWorkers() {
-
             // Lazy sorting to speed up training in inner loops
             if(!m_isGameWorkersSorted) {
                 GameWorker.Sort(m_gameWorkers);
@@ -1086,20 +1136,37 @@ public class Main {
 
         public DemographicGameWorker GetBestGameWorker() {
             
-            // TODO: only invoke for dity algorithms and batches!  
-            GameWorker.ClearResults(m_gameWorkers);
-            InvokeBatch(m_parameters.threadPool, 0, m_parameters.trainingSetSize, m_trainingSeeds);
-            SortGameWorkers();
+            // reevaluate dirty algorithms in current batch
+            InvokeBatch(m_parameters.threadPool, m_currentBatchStartIndex, m_currentBatchSize, m_trainingSeeds, false);
 
-            return m_gameWorkers.getFirst();
+            int remainingBatchSize = m_batchTrainingIndices.length - m_currentBatchSize;
+            if(remainingBatchSize > 0) {
+                // configure new batch to be all training data
+                // Note: we do this before MergeBatch so gameWorker.m_resultLastBatchId updates to it
+                //       and subsequent calls to GetBestGameWorker and InvokeBatch don't cause a recompute  
+                ++m_currentBatchId;
+                m_currentBatchStartIndex = 0;
+                m_currentBatchSize = m_batchTrainingIndices.length;
+
+                // merge remaining training data results into the new batch
+                InvokeBatch(m_parameters.threadPool, 0, remainingBatchSize, m_trainingSeeds, true);
+            }
+
+            // get best worker
+            SortGameWorkers();
+            return m_gameWorkers.get(0);
         }
 
-        protected int CreateRandomBatch(int batchSize) {
-            // Computes a random batch of 'batchSize' training from m_batchTrainingIndicies
-            // the random indices are placed at the end of the m_batchTrainingIndicies array
-            // Returns the first index of batch in m_batchTrainingIndicies 
-            // Requires 'batchSize' in range [0, m_batchTrainingIndicies.length]
-            
+        protected void CreateRandomBatch(int batchSize) {
+            // Computes a random batch of 'batchSize' training from m_batchTrainingIndices
+            // the random indices are placed at the end of the m_batchTrainingIndices array
+            // Returns the first index of batch in m_batchTrainingIndices 
+            // Requires 'batchSize' in range [0, m_batchTrainingIndices.length]
+
+            ++m_currentBatchId;
+            m_currentBatchSize = batchSize;
+            m_currentBatchStartIndex = m_batchTrainingIndices.length - batchSize;
+
             for(int i = 0; i < batchSize; ++i) {
                 // sample random trainingIndex without replacement
                 int sampleSize          = m_batchTrainingIndices.length - i;
@@ -1113,34 +1180,48 @@ public class Main {
                 m_batchTrainingIndices[sampleIndex]     = tailTrainingIndex;
                 m_batchTrainingIndices[tailSampleIndex] = sampleTrainingIndex;
             }
-            
-            return m_batchTrainingIndices.length - batchSize;
         }
 
-        public void InvokeBatch(ExecutorService threadPool, int batchStartIndex, int batchSize, long[] gameSeeds) {
+        public void InvokeBatch(ExecutorService threadPool, int batchStartIndex, int batchSize, long[] gameSeeds, boolean appendResults) {
             if(batchSize <= 0) return;
 
+            // TODO: Right now this marks the data as unsorted
+            //       optimize this to only mark data as unsorted if there exists a dirty gameWorker algorithm
+            //       that will be updated. AKA optimize the path: TrainAllTrainingData(batch 1) -> GetBestWorker(sorts) -> TrainAllTrainingData(batch1, but will resort sorted data)
+            //       we can do this by just tracking a has dirty flag in demographic that gets set by Train (AND POPULATION- might want a setter) and then 
+            //       gets cleared at InvokeBatch if a parameter is passed through?
             m_isGameWorkersSorted = false;
+
+            m_workerForceUpdate = appendResults;
+            m_workerClearResults = !appendResults;
+
+            int lastI = batchSize - 1;
             for(int i = 0; i < batchSize; ++i) {
-                
+
                 // Evaluate all algorithms with same game batch seed
-                int trainingIndex = m_batchTrainingIndices[batchStartIndex + i];
-                m_workerTrainingSeedPtr.value = gameSeeds[trainingIndex];
-                
+                int trainingIndex           = m_batchTrainingIndices[batchStartIndex + i];
+                m_workerTrainingSeed        = gameSeeds[trainingIndex];                
+                m_workerUpdateResultBatchId = (i == lastI);
+
                 GameWorker.Invoke(threadPool, m_gameWorkers);
+            
+                // append remaining of batch results
+                m_workerClearResults = false;
             }
         }
 
         public void Train(DemographicTrainingParameters trainParams) {
             
-            // evaluate a new random batch
-            int batchSize = Math.min(m_batchTrainingIndices.length, trainParams.batchSize);
-            int batchStartIndex = CreateRandomBatch(batchSize);
-            
-            // TODO: HERE!!! - rather than clearing the results each time
-            //       track which algorithms are dirty and which batches have been already invoked!
-            GameWorker.ClearResults(m_gameWorkers);
-            InvokeBatch(m_parameters.threadPool, batchStartIndex, batchSize, m_trainingSeeds);
+            int maxBatchSize = m_batchTrainingIndices.length;
+            int batchSize = Math.min(maxBatchSize, trainParams.batchSize);
+
+            boolean reuseLastBatch = (batchSize == maxBatchSize) && (m_currentBatchSize == maxBatchSize);
+            if(!reuseLastBatch) {
+                CreateRandomBatch(batchSize);
+            }
+
+            // evaluate all the algorithms on the current batch 
+            InvokeBatch(m_parameters.threadPool, m_currentBatchStartIndex, batchSize, m_trainingSeeds, false);
             
             // sort m_gameWorkers to partition them into surviving / crossover / mutation groups
             SortGameWorkers();
@@ -1152,6 +1233,11 @@ public class Main {
                 // replace all nonsurviviors with new networks
                 for(int i = trainParams.extinctionSurvivalCount; i < m_parameters.numAlgorithms; ++i) {
                     DemographicGameWorker worker = m_gameWorkers.get(i);
+                    
+                    // ignore invincible workers
+                    if(worker.m_invincible) continue;
+
+                    worker.m_resultBatchId = m_kDirtyBatchId;
                     worker.m_algorithm.Reset();
                 }
             
@@ -1161,11 +1247,16 @@ public class Main {
                 DemographicGameWorker bestWorker = m_gameWorkers.get(0);
 
                 // Update all non surviving algorithms
-                for(int i = trainParams.survivalCount; i < m_parameters.numAlgorithms; ++i) {
-                    
+                for(int i = trainParams.survivalCount; i < m_parameters.numAlgorithms; ++i) {                    
                     DemographicGameWorker worker = m_gameWorkers.get(i);
-                    GeneticAlgorithm algorithm   = worker.m_algorithm;
 
+                    // ignore invincible workers
+                    if(worker.m_invincible) continue;
+
+                    worker.m_resultBatchId = m_kDirtyBatchId;
+                    
+                    GeneticAlgorithm algorithm = worker.m_algorithm;
+                    
                     boolean isLucky = m_random.nextDouble() < trainParams.luckRate;
                     if(isLucky) {
 
@@ -1192,18 +1283,17 @@ public class Main {
                 }
             }
 
-            // TODO: mark mutated algorithms dirty!
             m_isGameWorkersSorted = false;
         }
     }
 
     public static class PopulationParameters {
         int numDemographics;
-        int numGraphPoints;
-        
-        // TODO: THIS SHOULD BE PULLED OUT TO AI PARAMETERS!!!
-        int validationSetSize = 10;
-        
+
+        NetworkGUI networkGUI = null;
+        int numPopulationGraphPoints = -1;
+        int numDemographicGraphPoints = -1;
+
         DemographicParameters demographicParameters;
         ExecutorService threadPool;
     }
@@ -1216,74 +1306,97 @@ public class Main {
         int migrationCount;
         int migrationResistantCount;
 
-        int    crossbreadCount;
-        int    crossbreadPoolSize;
-        double crossbreadMutationRate;
-        double crossbreadMutationRange;
+        int    crossbreedCount;
+        int    crossbreedPoolSize;
+        double crossbreedMutationRate;
+        double crossbreedMutationRange;
     }
 
     public static class PopulationGameWorker extends GameWorker {
+        DemographicGameWorker m_demographicGameWorker;
+        Population m_population;
 
-        Pointer<GeneticAlgorithm> m_algorithmPtr;
-        long[] m_gameSeeds;
+        long m_resultBatchId = 0;
 
-        public PopulationGameWorker(int id, Pointer<GeneticAlgorithm> algorithmPtr, long gameSeeds[]) {
+        public PopulationGameWorker(int id, Population population, DemographicGameWorker demographicGameWorker) {
             super(id);
 
-            m_algorithmPtr = algorithmPtr;
-            m_gameSeeds    = gameSeeds;
+            m_population = population;
+            m_demographicGameWorker = demographicGameWorker;
         }
 
         @Override
         public Object call() {
-            PlayGame(m_gameSeeds[m_id], m_algorithmPtr.value);
+
+            // algorithm hasn't changed reuse cached result (training data is constant)
+            if(m_resultBatchId == m_demographicGameWorker.m_resultBatchId) return null;
+
+            if(m_population.m_workerCopyDemographicResults) {
+
+                // copy over the solution for all of our training / initial results
+                m_result.Set(m_demographicGameWorker.m_result);
+                return null;
+            }
+
+            // add our game results update the cached result
+            PlayGame(m_population.m_workerGameSeed, m_demographicGameWorker.m_algorithm);
+            
+
+            // TODO: HERERERER!!!! ---
+            //       we shouldn't track result batch ID because the algorithm can get
+            //       get marked dirty, and then re-evaluated on same batch... instead we
+            //       should track a new algorithmID that gets set every time we modify an
+            //       algorithm. Demographics can still use the batchID to avoid recomputes
+            //       of results on same batches, and population can use it to prevent recomputes
+            //       of results of all training data!  
+            if(m_population.m_workerUpdateResultBatchId) {
+
+                // m_resultBatchId = m_demographicGameWorker.m_resultBatchId;
+                // System.out.println("BID: "+m_resultBatchId);
+            }
+
             return null;
-            // return PlayGame(m_gameSeeds[m_id], m_algorithmPtr.value);
         }
     }
 
     public static class Population {
         Random m_random;
         PopulationParameters m_parameters;
+        int m_trainingSetSize;
 
         Demographic[] m_demographics;
 
-        // TODO: Pull GUI and validation out to AI!
-        NetworkGUI m_networkGui;
-        long[] m_validationGameSeeds;
+        ArrayList<PopulationGameWorker>[] m_gameWorkerArrays;
+        boolean m_workerCopyDemographicResults;
+        boolean m_workerUpdateResultBatchId;
+        long m_workerGameSeed;
 
+        // TODO: replace this with a sorted array of all gameWorkers that we maintain
+        //       that way we can just pull the top n to set invincibility. 
+        //       can we also use a gameWorker flag to clear invincibility too? 
+        DemographicGameWorker m_invincibleGameWorker = null;
 
         // Note: 1 network and graph panel for each demographic and +1 for validation
         GraphPanel[] m_graphPanels;
         NetworkPanel[] m_networkPanels;
-        ArrayList<PopulationGameWorker>[] m_gameWorkerArrays;
 
-        Pointer<GeneticAlgorithm> m_gameWorkerAlgorithmPtr = new Pointer<>();        
+        public Color m_backgroundDemographicColor = Color.gray;
+        public Color m_foregroundDemographicColor = Color.lightGray;
 
-        public Color m_forgroundColor  = Color.lightGray;
-        public Color m_backgroundColor = Color.gray;
-
+        public Color m_backgroundPopulationColor  = new Color(0, 128, 128); //dark cyan
+        public Color m_foregroundPopulationColor   = new Color(0, 255, 255); //light cyan
 
         public Population(long randomSeed, PopulationParameters params) {
-            m_random     = new Random(randomSeed);
-            m_parameters = params; 
-
-            // TODO: Move GUI somewhere else? Like AI?
-            {
-                m_networkGui = new NetworkGUI("Population Networks");
-                m_validationGameSeeds = new long[params.validationSetSize];
-                for(int i = 0; i < params.validationSetSize; ++i) {
-                    m_validationGameSeeds[i] = m_random.nextLong();
-                }
-            }
-
+            m_random           = new Random(randomSeed);
+            m_parameters       = params;
+            m_trainingSetSize  = params.numDemographics * params.demographicParameters.trainingSetSize;
             m_demographics     = new Demographic[params.numDemographics];
+            m_gameWorkerArrays = new ArrayList[params.numDemographics];
 
             // +1 for cumulative population stats
             int numGUIItems = params.numDemographics + 1;
             m_graphPanels      = new GraphPanel[numGUIItems];
             m_networkPanels    = new NetworkPanel[numGUIItems];
-            m_gameWorkerArrays = new ArrayList[numGUIItems];
 
             String[] inputNames = new String[Game.kBoardSize];
             for(int y = 0; y < Game.kBoardHeight; ++y) {
@@ -1302,12 +1415,13 @@ public class Main {
                 outputColors[i] = Color.getHSBColor(colorHue, 1, 1);
             }
             
-            // create Demographics and GUI items 
+            // create Demographics and GUI items
+            int gameWorkerId = 0;
             for(int i = 0; i < numGUIItems; ++i) {
                 
                 String guiItemName;
                 Color guiItemColor;
-                ArrayList<PopulationGameWorker> gameWorkers;
+                int numGraphPoints;
 
                 int demographicTrainingSetSize = params.demographicParameters.trainingSetSize;
 
@@ -1319,44 +1433,38 @@ public class Main {
                     m_demographics[i] = demographic;
                     
                     // create game workers for demographic
-                    gameWorkers = new ArrayList<>(demographicTrainingSetSize);
-                    for(int j = 0; j < demographicTrainingSetSize; ++j) {
-                        gameWorkers.add(new PopulationGameWorker(j, m_gameWorkerAlgorithmPtr, demographic.m_trainingSeeds));
+                    ArrayList<PopulationGameWorker> gameWorkers = new ArrayList<>(demographicTrainingSetSize);
+                    for(DemographicGameWorker demographicGameWorker : demographic.m_gameWorkers) {
+                        gameWorkers.add(new PopulationGameWorker(gameWorkerId++, this, demographicGameWorker));
                     }
+                    m_gameWorkerArrays[i] = gameWorkers;
 
-                    guiItemName  = "D-" + i;
-                    guiItemColor = m_backgroundColor;
+                    guiItemName    = getDemographicGuiStr(i, -1);
+                    guiItemColor   = m_backgroundDemographicColor;
+                    numGraphPoints = params.numDemographicGraphPoints;
                     
                 } else {
-
-                    // TODO: create game workers for whole population not validation seeds?
-                    gameWorkers = new ArrayList<>(params.validationSetSize);
-                    for(int j = 0; j < params.validationSetSize; ++j) {
-                        gameWorkers.add(new PopulationGameWorker(j, m_gameWorkerAlgorithmPtr, m_validationGameSeeds));
-                    }
-
-                    guiItemName  = "Validation";
-                    guiItemColor = Color.CYAN;
+                    guiItemName    = getPopulationGuiStr(-1, -1);
+                    guiItemColor   = m_backgroundPopulationColor;
+                    numGraphPoints = params.numPopulationGraphPoints;
                 }
 
-
-                m_gameWorkerArrays[i] = gameWorkers;
-
                 // create networkPanel
-                NetworkPanel networkPanel = m_networkGui.AddNetworkPanel(guiItemName, null, inputNames, outputNames, outputColors);
+                NetworkGUI networkGUI = params.networkGUI;
+                NetworkPanel networkPanel = networkGUI.AddNetworkPanel(guiItemName, null, inputNames, outputNames, outputColors);
                 networkPanel.m_nameColor = guiItemColor;
                 m_networkPanels[i] = networkPanel;
 
                 // create graph
-                if(params.numGraphPoints > 0) {
-                    double[] graphData = new double[params.numGraphPoints];
+                if(numGraphPoints > 0) {
+                    double[] graphData = new double[numGraphPoints];
 
-                    GraphPanel graph = m_networkGui.AddGraph(guiItemName, params.numGraphPoints, graphData, 0, 0);
+                    GraphPanel graph = networkGUI.AddGraph(guiItemName, numGraphPoints, graphData, 0, 0);
 
                     graph.m_xMin = 0;
-                    graph.m_xMax = params.numGraphPoints;
+                    graph.m_xMax = numGraphPoints;
                     
-                    // Note: initilized reversed so graph scales on first update no mater fitness
+                    // Note: initialized reversed so graph scales on first update no mater fitness
                     graph.m_yMin = Double.MAX_VALUE;
                     graph.m_yMax = Double.MIN_VALUE;
 
@@ -1369,7 +1477,14 @@ public class Main {
         }
 
         // TODO: should this return a GameWorker so we also have the performance of it?
-        public GeneticAlgorithm Train(PopulationTrainingParameters trainParams) {
+        public PopulationGameWorker Train(PopulationTrainingParameters trainParams) {
+
+            // Unhighlight population graph 
+            NetworkPanel populationNetworkPanel = m_networkPanels[m_parameters.numDemographics];
+            GraphPanel   populationGraphPanel   = m_graphPanels[m_parameters.numDemographics];
+
+            populationGraphPanel.m_color       = m_backgroundPopulationColor;
+            populationNetworkPanel.m_nameColor = m_backgroundPopulationColor;
 
             // train each demographic
             for(int i = 0; i < m_parameters.numDemographics; ++i) {
@@ -1379,10 +1494,9 @@ public class Main {
                 Demographic demographic   = m_demographics[i];
                 GraphPanel graphPanel     = m_graphPanels[i];
                 NetworkPanel networkPanel = m_networkPanels[i];
-                ArrayList<PopulationGameWorker> gameWorkers = m_gameWorkerArrays[i];
 
-                graphPanel.m_color = m_forgroundColor;
-                networkPanel.m_nameColor = m_forgroundColor;
+                graphPanel.m_color = m_foregroundDemographicColor;
+                networkPanel.m_nameColor = m_foregroundDemographicColor;
 
                 for(int t = 0; t < trainParams.trainingsPerDemographic; ++t) {
                 
@@ -1390,68 +1504,61 @@ public class Main {
                     
                     DemographicGameWorker bestWorker = demographic.GetBestGameWorker();
                     GeneticAlgorithm bestAlgorithm   = bestWorker.m_algorithm;
-
-                    // TODO: output batch results?
+                    
+                    String demographicGuiStr = getDemographicGuiStr(i, bestWorker.m_id);
                     
                     // TODO: Do we need to copy weights for multithreading?
                     networkPanel.m_network = bestAlgorithm.m_network;
+                    networkPanel.m_name = demographicGuiStr;
 
                     double avgTrainingSetFitness = bestWorker.m_result.total.m_fitness / m_parameters.demographicParameters.trainingSetSize;
                     graphPanel.pushPoint(avgTrainingSetFitness, true);
-                    
-                    // TODO: HERE!!! --- there is a disconnect between bestWorker.m_result.total.m_fitness
-                    m_gameWorkerAlgorithmPtr.value = bestAlgorithm;
-
-                    GameWorker.ClearResults(gameWorkers);
-                    GameWorker.Invoke(m_parameters.threadPool, gameWorkers);
-                    GameWorkerResult cumulativeResult = GameWorker.GetCumulativeResult(gameWorkers);
+                    graphPanel.m_name = demographicGuiStr;
 
                     // TODO: Plot min & max on same graph too!
-
-                    double error = bestWorker.m_result.total.m_fitness - cumulativeResult.total.m_fitness;
-                    if(Math.abs(error) > 1E10) {
-                        System.out.println("OH NO!!");
-                    }
                 }
 
-                graphPanel.m_color = m_backgroundColor;
-                networkPanel.m_nameColor = m_backgroundColor;
+                graphPanel.m_color = m_backgroundDemographicColor;
+                networkPanel.m_nameColor = m_backgroundDemographicColor;
             }
 
-            // TODO: CLEAN THIS UP!!!
-
-            // crossbread
+            // TODO: prevent crossbreeding in same demographic and also prevent multiple replacement of same child!
+            // crossbred
             for(int i = 0; i < m_parameters.numDemographics; ++i) {
                 Demographic demographic1 = m_demographics[i];
                 
-                for(int j = 0; j < trainParams.crossbreadCount; ++j) {
+                for(int j = 0; j < trainParams.crossbreedCount; ++j) {
 
                     int demographic2Index = m_random.nextInt(m_parameters.numDemographics);
                     Demographic demographic2 = m_demographics[demographic2Index];
                     
                     // select worst performer as a child
-                    int childIndex   = demographic1.m_parameters.numAlgorithms - i - 1;
+                    int childIndex = demographic1.m_parameters.numAlgorithms - i - 1;
+                    DemographicGameWorker childWorker = demographic2.m_gameWorkers.get(childIndex);
+
+                    // don't modify invincible children
+                    // TODO: this should keep searching for the first non invincible one
+                    if(childWorker.m_invincible) continue;
 
                     // sample best performers for parents
-                    int parentIndex1 = m_random.nextInt(trainParams.crossbreadPoolSize);
-                    int parentIndex2 = m_random.nextInt(trainParams.crossbreadPoolSize);
+                    int parentIndex1 = m_random.nextInt(trainParams.crossbreedPoolSize);
+                    int parentIndex2 = m_random.nextInt(trainParams.crossbreedPoolSize);
 
-                    // mingle
                     DemographicGameWorker parentWorker1 = demographic1.m_gameWorkers.get(parentIndex1);
                     DemographicGameWorker parentWorker2 = demographic2.m_gameWorkers.get(parentIndex2);
-                    DemographicGameWorker childWorker   = demographic2.m_gameWorkers.get(childIndex);
 
+                    // mingle
                     GeneticAlgorithm parent1 = parentWorker1.m_algorithm; 
                     GeneticAlgorithm parent2 = parentWorker2.m_algorithm; 
                     GeneticAlgorithm child   = childWorker.m_algorithm; 
 
-                    child.MakeChild(parent1, parent2, trainParams.crossbreadMutationRate, trainParams.crossbreadMutationRange);
+                    child.MakeChild(parent1, parent2, trainParams.crossbreedMutationRate, trainParams.crossbreedMutationRange);
+                    childWorker.m_resultBatchId = Demographic.m_kDirtyBatchId;
                 }            
             }
 
             // perform migrations
             int migrationPoolSize = trainParams.migrationCount - trainParams.migrationResistantCount;
-
             for(int i = 0; i < m_parameters.numDemographics; ++i) {
                 Demographic demographic1 = m_demographics[i];
                 
@@ -1471,69 +1578,190 @@ public class Main {
                     GeneticAlgorithm algorithm1 = worker1.m_algorithm; 
                     GeneticAlgorithm algorithm2 = worker2.m_algorithm; 
 
-                    Network network1 = algorithm1.m_network;
-                    Network network2 = algorithm2.m_network;
+                    boolean invincible1 = worker1.m_invincible;
+                    boolean invincible2 = worker2.m_invincible;
 
-                    algorithm1.m_network = network2;
-                    algorithm2.m_network = network1;
+                    // swap algorithms
+                    worker1.m_algorithm = algorithm2;
+                    worker2.m_algorithm = algorithm1;
+
+                    worker1.m_invincible = invincible2;
+                    worker2.m_invincible = invincible1;
+                    
+                    m_invincibleGameWorker = worker2;
+
+                    worker1.m_resultBatchId = Demographic.m_kDirtyBatchId;
+                    worker2.m_resultBatchId = Demographic.m_kDirtyBatchId;
                 }    
             }
             
-            // TODO: find best population network and plot validation data
-            // TODO: HIZZLE ---- Make this work. Validation data should probably be in the main AI class
-            //       we should really be selecting the top performing algorithm from the union of our population's training set?
-            //       however we should prioritize returning something so we can actually play a demo of the top algorithm!
-            NetworkPanel                    validationNetworkPanel = m_networkPanels[m_parameters.numDemographics];
-            GraphPanel                      validationGraphPanel   = m_graphPanels[m_parameters.numDemographics];
-            ArrayList<PopulationGameWorker> validationGameWorkers  = m_gameWorkerArrays[m_parameters.numDemographics];
+            // highlight population graph
+            populationGraphPanel.m_color       = m_foregroundPopulationColor;
+            populationNetworkPanel.m_nameColor = m_foregroundPopulationColor;
 
-            GeneticAlgorithm bestValidationAlgorithm = null;
-            GameWorkerResult bestValidationResults = new GameWorkerResult();
-            for(int i = 0; i < m_parameters.numDemographics; ++i) {
-                Demographic demographic = m_demographics[i];
-                DemographicGameWorker bestDemographicGameWorker = demographic.m_gameWorkers.get(0);
+            // Get the best game worker for the entire population
+            PopulationGameWorker bestGameWorker = GetBestGameWorker();
 
-                // // TODO: this is hacky.. should we evaluate all demographic algorithms not just their best?
-                // //       also, should we have a different GameWorker that can run everything together?
-                // //       we could also just Eval the demographic on our validation game seeds?
-                // m_gameWorkerAlgorithmPtr.value = bestDemographicGameWorker.m_algorithm;
-                // GameWorker.ClearResults(validationGameWorkers);
-                // GameWorker.Invoke(trainParams.threadPool, validationGameWorkers);
-                // GameWorkerResult cumulativeResult = GameWorker.GetCumulativeResult(validationGameWorkers);                
+            int algorithmsPerDemographic = m_parameters.demographicParameters.numAlgorithms;
+            int bestGameWorkerDemographicIndex = bestGameWorker.m_id / algorithmsPerDemographic;
+            int bestGameWorkerAlgorithmIndex   = bestGameWorker.m_id % algorithmsPerDemographic;
 
-                // if(cumulativeResult.total.m_fitness > bestValidationResults.total.m_fitness || cumulativeResult.min.m_fitness > bestValidationResults.min.m_fitness) {
-                //     bestValidationResults = cumulativeResult;
-                //     bestValidationAlgorithm = bestDemographicGameWorker.m_algorithm;
-                // }
-
-
-                // DemographicGameWorker validationGameWorker = demographic.EvaluateBatch(
-                //     demographic.m_parameters.threadPool, 
-                //     0, demographic.m_parameters.trainingSetSize, 
-                //     m_validationGameSeeds
-                // );
-                // GameWorkerResult validationResult = validationGameWorker.m_result;
-
-                // // TODO: rely on GameWorker.Sort to generate this so we have an ordering!
-                // if(validationResult.total.m_fitness > bestValidationResults.total.m_fitness || validationResult.min.m_fitness > bestValidationResults.min.m_fitness) {
-                //     bestValidationResults = validationResult;
-                //     bestValidationAlgorithm = bestDemographicGameWorker.m_algorithm;
-                // }
-                
+            // Note: asserts assert's aren't always enabled ...this is
+            if(bestGameWorkerAlgorithmIndex != bestGameWorker.m_demographicGameWorker.m_id) {
+                System.out.println("INCORRECTLY MAPPED ALGORITHM INDEX!");
             }
 
-            // double bestValidationAvgFitness = bestValidationResults.total.m_fitness / m_parameters.validationSetSize;
-            // validationNetworkPanel.m_network = bestValidationAlgorithm.m_network;
-            // validationGraphPanel.pushPoint(bestValidationAvgFitness, true);
-    
-            return bestValidationAlgorithm;
+            String populationGuiStr = getPopulationGuiStr(bestGameWorkerDemographicIndex, bestGameWorkerAlgorithmIndex);
+            double bestResultAvgFitness = bestGameWorker.m_result.total.m_fitness / m_trainingSetSize;
+
+            populationNetworkPanel.m_network = bestGameWorker.m_demographicGameWorker.m_algorithm.m_network;
+            populationNetworkPanel.m_name = populationGuiStr;
+
+            populationGraphPanel.pushPoint(bestResultAvgFitness, true);    
+            populationGraphPanel.m_name = populationGuiStr;
+
+            // TODO: replace this with a tunable parameter / count
+            if(m_invincibleGameWorker != null) {
+                m_invincibleGameWorker.m_invincible = false;
+            }
+            m_invincibleGameWorker = bestGameWorker.m_demographicGameWorker;
+            m_invincibleGameWorker.m_invincible = true;
+
+            return bestGameWorker;
         }
 
+        public PopulationGameWorker GetBestGameWorker() {
+            PopulationGameWorker bestGameWorker = null;
+                        
+            for(int i = 0; i < m_parameters.numDemographics; ++i) {                
+                ArrayList<PopulationGameWorker> iGameWorkers = m_gameWorkerArrays[i];
+
+                // make sure all training data is evaluated for current gameWorker demographic 
+                // TODO: optimize this with is dirty flag!
+                Demographic demographic = m_demographics[i];
+                demographic.GetBestGameWorker();
+
+                // enable caching results on last GameWorker.Invoke
+                m_workerUpdateResultBatchId = (m_parameters.numDemographics == 1);
+
+                // Initialize iGameWorkers results from with demographic i's training data results
+                m_workerCopyDemographicResults = true;
+                GameWorker.Invoke(m_parameters.threadPool, iGameWorkers);
+                m_workerCopyDemographicResults = false;
+
+                // evaluate iGameWorkers on remaining demographic training data
+                for(int j = 0; j < m_parameters.numDemographics; ++j) {
+                    if(i == j) continue;
+
+                    int lastInvokedJ = m_parameters.numDemographics - 1;
+                    if(lastInvokedJ == i) --lastInvokedJ;
+
+                    Demographic jDemographic = m_demographics[j]; 
+
+                    int lastSeedIndex = jDemographic.m_trainingSeeds.length - 1;
+                    for(int seedIndex = 0; seedIndex <= lastSeedIndex; ++seedIndex) {
+
+                        // enable caching results on last GameWorker.Invoke
+                        // TODO: is there a cleaner way to do this
+                        //       this technically breaks / disables caching if lastDemographic doesn't have any training data
+                        //       (which shouldn't happen, but still)
+                        m_workerUpdateResultBatchId = ((j == lastInvokedJ) && (seedIndex == lastSeedIndex));
+
+                        // if(m_workerUpdateResultBatchId) {
+                        //     System.out.println("I - i:"+i+" | j:"+j+" | s:"+seedIndex);
+                        // } else {
+                        //     System.out.println("P - i:"+i+" | j:"+j+" | s:"+seedIndex);
+                        // }
+
+                        m_workerGameSeed = jDemographic.m_trainingSeeds[seedIndex];
+                        GameWorker.Invoke(m_parameters.threadPool, iGameWorkers);
+                    }
+                                
+                    m_workerUpdateResultBatchId = false;
+                }
+
+                // get the best result
+                // TODO: should we just sort this so we can mark multiple invincible algorithms?
+                for(PopulationGameWorker gameWorker : iGameWorkers) {
+                    if(bestGameWorker == null || bestGameWorker.compareTo(gameWorker) > 0) {
+                        bestGameWorker = gameWorker;
+                    } 
+                }
+            }
+
+            return bestGameWorker;
+        }
+
+        int numDigits(int i) {
+            int result = 1;
+            while((i/=10) > 0) {
+                result+= 1;
+            }
+            return result;
+        }
+
+        String getAlgorithmStr(String prefix, int demographicId, int algorithmId) {
+            // TODO: benchmark this -- if its too slow we should just cache the strings
+            // Java string formatting / String builder look like trash
+
+            int maxDemographicDigits = numDigits(m_parameters.numDemographics);
+            int maxAlgorithmDigits   = numDigits(m_parameters.demographicParameters.numAlgorithms);
+
+            StringBuilder result = new StringBuilder(prefix.length() + maxDemographicDigits + 1 + maxAlgorithmDigits);
+            result.append(prefix);
+
+            // append demographicId
+            int numDemographicSpace = (demographicId < 0) ? (maxDemographicDigits - 1) : (maxDemographicDigits - numDigits(demographicId));
+            for(int i = 0; i < numDemographicSpace; ++i) {
+                result.append(' ');
+            }
+            if(demographicId < 0) {
+                result.append('?');
+            } else {
+                result.append(demographicId);
+            }
+
+            // separator
+            result.append(':');
+
+            // append algorithmId 
+            if(algorithmId < 0) {
+                
+                result.append('?');           
+                int numAlgorithmSpace = maxAlgorithmDigits - 1;
+                for(int i = 0; i < numAlgorithmSpace; ++i) {
+                    result.append(' ');
+                }
+
+            } else {
+
+                int numAlgorithmZero = maxAlgorithmDigits - numDigits(algorithmId);
+                for(int i = 0; i < numAlgorithmZero; ++i) {
+                    result.append('0');
+                }
+                result.append(algorithmId);
+            }
+
+            return result.toString();
+        }
+
+        String getDemographicGuiStr(int demographicId, int algorithmId) {
+            return getAlgorithmStr("D ", demographicId, algorithmId);
+        }
+
+        String getPopulationGuiStr(int demographicId, int algorithmId) {
+            return getAlgorithmStr("P ", demographicId, algorithmId);
+        }   
     }
 
     public static class AIParameters {
-        int defaultNumThreads;
+        long seed = 42;
+        int defaultNumThreads = 1;
 
+        int defaultNumPopulationGraphPoints = 0;
+        int defaultNumDemographicGraphPoints = 0;
+        int validationSetSize = 10;
+        
         PopulationParameters populationParameters;
     }
 
@@ -1548,8 +1776,15 @@ public class Main {
         Random m_random;
         Population m_population;
         
-        public AI(long seed, AIParameters params) {
-            m_random = new Random(seed);
+        AIParameters m_parameters;
+        NetworkGUI m_networkGui;
+        
+        long[] m_validationGameSeeds;
+
+        public AI(AIParameters params) {
+            m_parameters = params;
+
+            m_random = new Random(params.seed);
 
             PopulationParameters  populationParams  = params.populationParameters;
             DemographicParameters demographicParams = populationParams.demographicParameters;
@@ -1566,11 +1801,34 @@ public class Main {
                 }             
             }
 
+            m_validationGameSeeds = new long[params.validationSetSize];
+            for(int i = 0; i < params.validationSetSize; ++i) {
+                m_validationGameSeeds[i] = m_random.nextLong();
+            }
+
+            m_networkGui = new NetworkGUI("2048 Genetic Algorithm");
+            m_networkGui.setDefaultCloseOperation(WindowConstants.EXIT_ON_CLOSE);
+
+            // TODO: Add validation graph to network GUI
+
+            if(populationParams.networkGUI == null) {
+                populationParams.networkGUI = m_networkGui;
+            }
+
+            // TODO: this is wonky ... we want to specify the number of graph points
+            //       in aiParameters, but create the graphs via populationParams ...
+            //       we should create the gui in here and then pass it to the population?
+            if(populationParams.numPopulationGraphPoints < 0) {
+                populationParams.numPopulationGraphPoints = params.defaultNumPopulationGraphPoints;
+            }
+
+            if(populationParams.numDemographicGraphPoints < 0) {
+                populationParams.numDemographicGraphPoints = params.defaultNumDemographicGraphPoints;
+            }
 
             long populationSeed = m_random.nextLong();
-            m_population = new Population(populationSeed, populationParams);            
-        
-            m_population.m_networkGui.setDefaultCloseOperation(WindowConstants.EXIT_ON_CLOSE);
+            m_population = new Population(populationSeed, populationParams);
+
         }
         
         public void Train(AITrainingParameters trainParams) {
@@ -1619,7 +1877,15 @@ public class Main {
     public static void main(String[] args) {
 
         AIParameters aiParameters = new AIParameters(){{
-            defaultNumThreads = 32;
+
+            seed = 8264;
+
+            // defaultNumThreads = 1;
+            defaultNumThreads = 14;
+
+            // TODO: these should default to aiTrainingParams numEpochs and populationTrainingsPerDemographics
+            defaultNumPopulationGraphPoints = 250;
+            defaultNumDemographicGraphPoints = 5 * defaultNumPopulationGraphPoints;
 
             populationParameters = new PopulationParameters(){{
                 
@@ -1627,13 +1893,10 @@ public class Main {
     
                 demographicParameters = new DemographicParameters(){{
                     layerWidths     = new int[]{8, 4, 4};
-                    numAlgorithms   = 1000;
+                    // numAlgorithms   = 1000;
+                    numAlgorithms   = 500;
 
                     trainingSetSize = 3;
-                    // trainingSetSize = 2;
-    
-                    // numGraphPoints = 1000;
-                    numGraphPoints = 10 * 250;
                 }};                
             }};
         }};
@@ -1644,22 +1907,21 @@ public class Main {
             outputStride = 1;
 
             populationTrainingParameters = new PopulationTrainingParameters(){{            
-                trainingsPerDemographic = 10;
+                trainingsPerDemographic = 5;
 
                 int numDemographicAlgorithms = aiParameters.populationParameters.demographicParameters.numAlgorithms;
 
                 migrationCount          = (int)(.10 * numDemographicAlgorithms);
                 migrationResistantCount = (int)(.01 * numDemographicAlgorithms);
 
-                crossbreadCount         = (int)(.10 * numDemographicAlgorithms);
-                crossbreadPoolSize      = (int)(.10 * numDemographicAlgorithms);
-                crossbreadMutationRate  = 0;
-                crossbreadMutationRange = 1;
+                crossbreedCount         = (int)(.10 * numDemographicAlgorithms);
+                crossbreedPoolSize      = (int)(.10 * numDemographicAlgorithms);
+                crossbreedMutationRate  = 0;
+                crossbreedMutationRange = 1;
 
                 demographicTrainingParameters = new DemographicTrainingParameters() {{
                  
-                    // batchSize = 3;
-                    batchSize = 2;
+                    batchSize = 3;
                     // batchSize = 2;
 
                     survivalCount           = (int)(.10 * numDemographicAlgorithms);
@@ -1681,14 +1943,11 @@ public class Main {
 
         }};
 
-
-        long aiSeed = 8264;
-        AI ai = new AI(aiSeed, aiParameters);
+        AI ai = new AI(aiParameters);
 
         ai.Train(aiTrainingParams);
 
 
-        
         // TODO: run demos from training set and test sets
         //     // show a game using best model
         //     int algorithmIndex = sortedAlgorithmIndices[0];
@@ -1699,7 +1958,7 @@ public class Main {
         //         String title = "Training Demo: "+i;
 
         //         // pull game seed from last trained batch which should perform the best
-        //         int trainingIndex = batchTrainingIndicies[trainingSetSize - 1];
+        //         int trainingIndex = batchTrainingIndices[trainingSetSize - 1];
         //         long gameSeed = trainingGameSeeds[trainingIndex];
 
         //         PlayDemo(title, algorithm.m_network, gameSeed, demoDelayMs);

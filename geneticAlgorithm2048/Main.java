@@ -17,7 +17,6 @@ import javax.swing.JPanel;
 import javax.swing.JScrollPane;
 import javax.swing.WindowConstants;
 
-
 public class Main {
 
     public static class Neuron {
@@ -43,7 +42,11 @@ public class Main {
                 weightedInput+= inputs[inputOffset + i] * m_weights[i];
             }
 
+            // THIS is super slow, but converges a lot better
             return Math.tanh(weightedInput);
+
+            // // leaky reLU
+            // return (weightedInput < 0) ? (.01 * weightedInput) : weightedInput;
         }
     }   
 
@@ -85,19 +88,25 @@ public class Main {
 
     public static class Network {
         protected Layer[] m_layers;
+        
+        protected int m_inputSize;
         protected int m_outputSize;
         protected int m_maxNumLayerWeights;
 
         protected static class ThreadState {
-            // Note: m_threadSafeLayerOutput needs to be large enough to store input and output partial results
-            public double[] layerOutput;
-            public double[] evalResults; 
+            public double[] input;
+            public double[] output;
+            public double[] hiddenLayerBuffer;
 
             public ThreadState(Network network) {
-                layerOutput = new double[2*network.m_maxNumLayerWeights];
-                evalResults = new double[network.m_outputSize];
-            }
+                input  = new double[network.m_inputSize];
+                output = new double[network.m_outputSize];
 
+                // Note: hiddenLayerBuffer needs to be large enough to store input and output partial results
+                //       really we could just use this for all inputs / output, but we have other
+                //       arrays to size them correctly to match network dimensions
+                hiddenLayerBuffer = new double[2*network.m_maxNumLayerWeights];
+            }
         }
 
         ThreadLocal<ThreadState> m_threadState = ThreadLocal.withInitial(() -> new ThreadState(this));
@@ -108,6 +117,7 @@ public class Main {
             assert numLayers > 0: "Invalid numLayers. Expected pos number got: "+numLayers;
 
             m_layers = new Layer[numLayers];
+            m_inputSize = inputSize;
             m_outputSize = layerWidths[numLayers-1];
             
             // Note: updated below;
@@ -143,12 +153,14 @@ public class Main {
             return inputs;
         }
 
-        public double[] EvalThreadSafe(double[] inputs) {
-            
-            ThreadState threadState = m_threadState.get();
+        public ThreadState GetThreadState() {
+            return m_threadState.get();
+        }
 
-            double[] results = threadState.evalResults;
-            double[] outputs = threadState.layerOutput;
+        public double[] EvalThreadSafe(ThreadState threadState) {            
+            double[] inputs  = threadState.input;
+            double[] results = threadState.output;
+            double[] outputs = threadState.hiddenLayerBuffer;
             
             // eval intermediate layers into outputs
             // Note: we offset the input and output because we cannot call Eval with same input and output location.
@@ -644,15 +656,33 @@ public class Main {
 
 
     public static class GeneticAlgorithm {
+        
+        public static final Game.Direction[] kDirections = Game.Direction.values();
 
         public Network m_network;
         public Random m_random;
 
-        public static final Game.Direction[] kDirections = Game.Direction.values();
+        protected static class ThreadState {
+            public int[] sortedDirectionIndices;
+            public Network.ThreadState networkThreadState;
+
+            public ThreadState(GeneticAlgorithm geneticAlgorithm) {
+
+                // TODO: can we just merge the network thread state to here?
+                networkThreadState = geneticAlgorithm.m_network.GetThreadState();
+                
+                sortedDirectionIndices = new int[kDirections.length];
+                for(int i = 0; i < sortedDirectionIndices.length; ++i) {
+                    sortedDirectionIndices[i] = i;
+                }                
+            }
+        }
+
+        ThreadLocal<ThreadState> m_threadState = ThreadLocal.withInitial(() -> new ThreadState(this));
 
         public GeneticAlgorithm(long seed, int[] layerWidths) {
             m_random = new Random(seed);
-            m_network = new Network(Game.kBoardSize, layerWidths, m_random);
+            m_network = new Network(Game.kBoardSize, layerWidths, m_random);            
         }
 
         public static void SortIndices(double[] values, int[] sortedIndices) {
@@ -737,32 +767,50 @@ public class Main {
 
             // return fitness;
         }
-
-        public double PlayGame(Game game, int msDelay, boolean threadSafe) {
-        
-            double[] inputs = new double[Game.kBoardSize];
-            int[] sortedResultIndices = new int[kDirections.length];
+ 
+        // Plays the game to completion using the the neural network and returns the final resulting game's fitness
+        public double PlayGame(Game game, int msDelay) {
+            
+            ThreadState threadState                = m_threadState.get();
+            int[] sortedDirectionIndices           = threadState.sortedDirectionIndices;
+            Network.ThreadState networkThreadState = threadState.networkThreadState;
 
             while(!game.IsGameOver()) {
 
-                // get board input
-                for(int i = 0; i < inputs.length; ++i) {
+                // set board inputs
+                for(int i = 0; i < networkThreadState.input.length; ++i) {
                     int tile = game.m_board[i];
+
+                    // TODO: this is slow - what if we stored the board tileBits as double
+                    //       and then just pulled the mantissa out of it? 
 
                     // Normalized input for the largest possible tile value of 131,072 = 2^17
                     int tileBits = GetHighestBit(tile);
-                    inputs[i] = tileBits * (1/17.0);
+                    networkThreadState.input[i] = tileBits * (1/17.0);
                 }
-                
-                // evaluate network
-                double[] results = threadSafe ? m_network.EvalThreadSafe(inputs) : m_network.Eval(inputs);
-                
-                // Sort results only 4 results, this insertion sort should be fast
-                SortIndices(results, sortedResultIndices);
 
+                // TODO: Do we need to use EvalThreadSafe anymore or can we switch to standard Eval? 
+                //       with the new way we train the Populations we only ever evaluate a
+                //       network on a single thread at a time so we could use slightly faster m_network.Eval
+                //       and move input array into threadState.
+                //       Either way most of the time is spent playing the game
+                //       not evaluating the network so this isn't really much of a bottle neck
+                //       and removing this seems like it can cause heisenbugs later on down the road
+                //       so lets just wait until it actually becomes a bottleneck  
+                // double[] results = m_network.Eval(networkThreadState.input);                
+                                
+                // evaluate network
+                double[] results = m_network.EvalThreadSafe(networkThreadState);
+
+
+                // Note: this insertion sort is extremely fast and guarantees determinism with the same 
+                //       game played on the same network (directionIndices.length = 4)
+                SortIndices(results, sortedDirectionIndices);
+                
                 // make best move
-                for(int i = 0; i < sortedResultIndices.length; ++i) {
-                    int directionIndex = sortedResultIndices[i];
+                // Note: loop likely exits on first iteration
+                for(int i = 0; i < sortedDirectionIndices.length; ++i) {
+                    int directionIndex = sortedDirectionIndices[i];
 
                     if(game.Move(kDirections[directionIndex])) {
                         break;
@@ -959,7 +1007,7 @@ public class Main {
 
         public Object PlayGame(long gameSeed, GeneticAlgorithm algorithm) {
             Game game = new Game(gameSeed);            
-            double fitness = algorithm.PlayGame(game, 0, true);
+            double fitness = algorithm.PlayGame(game, 0);
             
             m_result.Add(game, fitness);
             return null;
@@ -978,11 +1026,6 @@ public class Main {
             for(GameWorker worker : gameWorkers) {
                 worker.m_result.Clear();
             }     
-        }
-
-        public static <T extends GameWorker> void Sort(ArrayList<T> gameWorkers) {
-            // sort m_algorithmWorkers in descending order by results
-            Collections.sort(gameWorkers);
         }
         
         public static <T extends GameWorker> GameWorkerResult GetCumulativeResult(ArrayList<T> gameWorkers) {
@@ -1012,11 +1055,11 @@ public class Main {
         GeneticAlgorithm m_algorithm;
 
         // TODO: should these be tracked inside GeneticAlgorithm?
-        public long m_algorithmId   = 0;
-        public boolean m_invincible = false;
+        long m_algorithmId   = 0;
+        boolean m_invincible = false;
 
-        public long m_resultBatchId     = 0;
-        public long m_resultAlgorithmId = 0;
+        long m_resultBatchId     = 0;
+        long m_resultAlgorithmId = 0;
      
         public DemographicGameWorker(int id, GeneticAlgorithm algorithm, Demographic demographic) {
             super(id);
@@ -1078,7 +1121,11 @@ public class Main {
         int survivalCount;
         int extinctionSurvivalCount;
 
-        double luckRate;
+        int luckyPoolSize;
+        double luckyRate;
+        double luckyMutationRate;
+        double luckyMutationRange;
+        
         double extinctionRate;
     
         double mutationRate;
@@ -1109,8 +1156,8 @@ public class Main {
         boolean m_isGameWorkersSorted = false;
 
         long m_workerTrainingSeed;
-        boolean m_workerForceUpdate        = false;
-        boolean m_workerClearResults        = false;
+        boolean m_workerForceUpdate     = false;
+        boolean m_workerClearResults    = false;
         boolean m_workerUpdateResultIds = false;
 
         public Demographic(long seed, DemographicParameters params) {
@@ -1146,7 +1193,7 @@ public class Main {
         public void SortGameWorkers() {
             // Lazy sorting to speed up training in inner loops
             if(!m_isGameWorkersSorted) {
-                GameWorker.Sort(m_gameWorkers);
+                Collections.sort(m_gameWorkers);
                 m_isGameWorkersSorted = true;
             }
         }
@@ -1216,8 +1263,8 @@ public class Main {
             for(int i = 0; i < batchSize; ++i) {
 
                 // Evaluate all algorithms with same game batch seed
-                int trainingIndex           = m_batchTrainingIndices[batchStartIndex + i];
-                m_workerTrainingSeed        = gameSeeds[trainingIndex];                
+                int trainingIndex       = m_batchTrainingIndices[batchStartIndex + i];
+                m_workerTrainingSeed    = gameSeeds[trainingIndex];                
                 m_workerUpdateResultIds = (i == lastI);
 
                 GameWorker.Invoke(threadPool, m_gameWorkers);
@@ -1261,10 +1308,10 @@ public class Main {
             } else {
                 // Normal training
                 int crossoverIndex = trainParams.survivalCount + trainParams.mutationCount;
-                DemographicGameWorker bestWorker = m_gameWorkers.get(0);
 
                 // Update all non surviving algorithms
-                for(int i = trainParams.survivalCount; i < m_parameters.numAlgorithms; ++i) {                    
+                // Note: we traverse backwards to allow crossover to complete prior to mutations
+                for(int i = m_parameters.numAlgorithms - 1; i >= trainParams.survivalCount; --i) {              
                     DemographicGameWorker worker = m_gameWorkers.get(i);
 
                     // ignore invincible workers
@@ -1273,11 +1320,14 @@ public class Main {
                     ++worker.m_algorithmId;
                     GeneticAlgorithm algorithm = worker.m_algorithm;
                     
-                    boolean isLucky = m_random.nextDouble() < trainParams.luckRate;
+                    boolean isLucky = m_random.nextDouble() < trainParams.luckyRate;
                     if(isLucky) {
 
-                        // congrats! make a child with the best algorithm
-                        algorithm.MakeChild(algorithm, bestWorker.m_algorithm, trainParams.crossoverMutationRate, trainParams.crossoverMutationRange); 
+                        // congrats! make a child with the top lucky pool
+                        int parent2Index = m_random.nextInt(trainParams.luckyPoolSize);
+                        DemographicGameWorker parent2 = m_gameWorkers.get(parent2Index);
+
+                        algorithm.MakeChild(algorithm, parent2.m_algorithm, trainParams.luckyMutationRate, trainParams.luckyMutationRange);
 
                     } else if(i < crossoverIndex) {
 
@@ -1592,13 +1642,18 @@ public class Main {
                     worker1.m_algorithm = algorithm2;
                     worker2.m_algorithm = algorithm1;
 
-                    worker1.m_invincible = invincible2;
-                    worker2.m_invincible = invincible1;
-                    
-                    m_invincibleGameWorker = worker2;
-
                     ++worker1.m_algorithmId;
                     ++worker2.m_algorithmId;
+
+                    // swap invincibility
+                    worker1.m_invincible = invincible2;
+                    worker2.m_invincible = invincible1;
+
+                    if(m_invincibleGameWorker == worker1) {
+                        m_invincibleGameWorker = worker2;
+                    } else if(m_invincibleGameWorker == worker2) {
+                        m_invincibleGameWorker = worker1;
+                    }
                 }    
             }
             
@@ -1634,6 +1689,31 @@ public class Main {
             m_invincibleGameWorker = bestGameWorker.m_demographicGameWorker;
             m_invincibleGameWorker.m_invincible = true;
 
+            // TODO: THIS IS A HACK! - move this logic into Demographic once we get
+            //       logic tested and working well
+            // crossbreed the worst demographic workers with the invincible ones 
+            for(Demographic demographic : m_demographics) {
+
+                // sort gameWorkers
+                demographic.GetBestGameWorker();
+                
+                int numGameWorkers = demographic.m_gameWorkers.size();
+                for(int i = (int)(.95 * numGameWorkers); i < numGameWorkers; ++i) {
+                    
+                    DemographicGameWorker child = demographic.m_gameWorkers.get(i);
+                    if(child.m_invincible) continue;
+                    
+                    int parent2Index = demographic.m_random.nextInt(numGameWorkers);
+                    DemographicGameWorker parent2 = demographic.m_gameWorkers.get(parent2Index);
+                
+                    // TODO: we should really sample from a pool of invincible algorithms
+                    child.m_algorithm.MakeChild(m_invincibleGameWorker.m_algorithm, parent2.m_algorithm, .1, 1);
+                    ++child.m_algorithmId;
+                }
+
+                demographic.m_isGameWorkersSorted = false;
+            }
+
             return bestGameWorker;
         }
 
@@ -1644,7 +1724,7 @@ public class Main {
                 ArrayList<PopulationGameWorker> iGameWorkers = m_gameWorkerArrays[i];
 
                 // make sure all training data is evaluated for current gameWorker demographic 
-                // TODO: optimize this with is dirty flag!
+                // TODO: optimize this with dirty flag in Demographic to prevent rescheduling all threads!
                 Demographic demographic = m_demographics[i];
                 demographic.GetBestGameWorker();
 
@@ -1888,10 +1968,10 @@ public class Main {
             seed = 8264;
 
             // defaultNumThreads = 1;
-            defaultNumThreads = 14;
+            defaultNumThreads = 32;
 
             // TODO: these should default to aiTrainingParams numEpochs and populationTrainingsPerDemographics
-            defaultNumPopulationGraphPoints = 250;
+            defaultNumPopulationGraphPoints = 1000;
             defaultNumDemographicGraphPoints = 5 * defaultNumPopulationGraphPoints;
 
             populationParameters = new PopulationParameters(){{
@@ -1900,17 +1980,22 @@ public class Main {
     
                 demographicParameters = new DemographicParameters(){{
                     layerWidths     = new int[]{8, 4, 4};
+                    // layerWidths     = new int[]{32, 16, 4};
+                    // layerWidths     = new int[]{64, 32, 4};
                     // numAlgorithms   = 1000;
-                    numAlgorithms   = 500;
+                    numAlgorithms   = 200;
+                    // numAlgorithms   = 2000;
 
-                    trainingSetSize = 3;
+                    // trainingSetSize = 3;
+                    trainingSetSize = 5;
                 }};                
             }};
         }};
 
         AITrainingParameters aiTrainingParams = new AITrainingParameters(){{
             
-            numEpochs    = 250;
+            numEpochs    = 1000;
+            // numEpochs    = 10;
             outputStride = 1;
 
             populationTrainingParameters = new PopulationTrainingParameters(){{            
@@ -1928,22 +2013,29 @@ public class Main {
 
                 demographicTrainingParameters = new DemographicTrainingParameters() {{
                  
-                    batchSize = 3;
-                    // batchSize = 2;
+                    // batchSize = 3;
+                    batchSize = 5;
 
                     survivalCount           = (int)(.10 * numDemographicAlgorithms);
                     mutationCount           = (int)(.05 * numDemographicAlgorithms);
                     extinctionSurvivalCount = (int)(.01 * numDemographicAlgorithms);
 
                     crossoverPoolSize       = Math.max(1, survivalCount);
+                    // crossoverPoolSize       = (int)(.20 * numDemographicAlgorithms);
 
-                    luckRate       = .01;
-                    extinctionRate = 0;
+                    luckyPoolSize      = (int)(.01 * numDemographicAlgorithms);
+                    luckyRate          = .1;
+                    luckyMutationRate  = .1; 
+                    luckyMutationRange = 1;
+
+                    extinctionRate = .005;
                 
                     mutationRate  = .05;
+                    // mutationRate  = .02;
                     mutationRange = 1;
                     
                     crossoverMutationRate  = .1;
+                    // crossoverMutationRate  = .05;
                     crossoverMutationRange = 1;                
                 }};
             }};         
@@ -1954,6 +2046,9 @@ public class Main {
 
         ai.Train(aiTrainingParams);
 
+        // Exit for easier profiling
+        // System.exit(0);
+        
         // TODO: run games
         // // show a game using best model
         // int algorithmIndex = sortedAlgorithmIndices[0];

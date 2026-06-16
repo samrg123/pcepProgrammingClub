@@ -1573,6 +1573,13 @@ public class Main {
                     graphPanel.m_name = demographicGuiStr;
 
                     // TODO: Plot min & max on same graph too!
+
+                    // TODO: HEREERERER!!!
+                    //       plot min / max / avg diversity of the survivors as well to see how things progress over time
+                    //       where diversity is the distance to the mean network... this could also create a good policy for
+                    //       sorting / breaking ties in a demographic! Choosing the best performing network that is also the most
+                    //       diverse will help prevent get stuck in local minima especially when games get further along and we need
+                    //       to make 'large' changes to get to the next increase in fitness! 
                 }
 
                 graphPanel.m_color = m_backgroundDemographicColor;

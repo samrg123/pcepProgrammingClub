@@ -161,11 +161,8 @@ class RobotSim(py5.Sketch):
 
 
 def main() -> None:
-    robotSim1 = RobotSim()
-    robotSim2 = RobotSim()
-
-    robotSim1.run_sketch()
-    robotSim2.run_sketch()
+    robotSim = RobotSim()
+    robotSim.run_sketch()
 
 
 if __name__ == "__main__":

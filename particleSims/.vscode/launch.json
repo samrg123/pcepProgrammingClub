@@ -1,7 +1,7 @@
 {
     "configurations": [
         {
-            "name": "Python Debugger: main.py",
+            "name": "particleSims: main.py",
             "type": "debugpy",
             "request": "launch",
             "program": "${workspaceFolder}/main.py",

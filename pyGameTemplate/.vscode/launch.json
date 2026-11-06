@@ -6,10 +6,12 @@
     "configurations": [
 
         {
-            "name": "Python Debugger: Current File",
+            "name": "pyGameTemplate (WIP): ghostChase.py",
             "type": "debugpy",
             "request": "launch",
-            "program": "${workspaceFolder}/main.py",
+            // "program": "${workspaceFolder}/ghostChase/ghostChase.py",
+            "program": "${workspaceFolder}/pcgame/game.py",
+            "cwd": "${workspaceFolder}/pcgame",
             "console": "integratedTerminal",
             "justMyCode": false
         }

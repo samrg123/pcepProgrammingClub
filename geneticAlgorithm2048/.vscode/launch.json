@@ -7,7 +7,7 @@
 
         {
             "type": "java",
-            "name": "Main.java",
+            "name": "geneticAlgorithm2048: Main.java",
             "request": "launch",
             "mainClass": "${workspaceFolder}/Main.java"
         }

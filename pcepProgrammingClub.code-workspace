@@ -1,8 +1,17 @@
 {
 	"folders": [
 		{
+			"path": "fireworkSim"
+		},
+		{
 			"path": "geneticAlgorithm2048"
 		},
+		{
+			"path": "halloween"
+		},
+		{
+			"path": "numberGuessing"
+		},		
 		{
 			"path": "particleSims"
 		},
@@ -16,6 +25,9 @@
 			"path": "pyGameTemplate"
 		},
 		{
+			"path": "robotSim"
+		},		
+		{
 			"path": "seamCarving"
 		},
 		{
@@ -24,7 +36,6 @@
 		{
 			"path": "sortingAnimations"
 		},
-		
 		
 	],
 	"settings": {

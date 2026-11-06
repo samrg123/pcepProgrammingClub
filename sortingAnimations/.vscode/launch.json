@@ -6,7 +6,7 @@
     "configurations": [
 
         {
-            "name": "Python Debugger: main.py",
+            "name": "sortingAnimations: main.py",
             "type": "debugpy",
             "request": "launch",
             "justMyCode": true,

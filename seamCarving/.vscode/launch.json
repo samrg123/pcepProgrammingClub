@@ -10,7 +10,11 @@
             "request": "launch",
             "program": "${workspaceFolder}/main.py",
             "console": "integratedTerminal",
-            "args": ["${workspaceFolder}/sampleImages/camera_250x250.jpg"]
+            "args": [
+                "${workspaceFolder}/sampleImages/Broadway_tower_edit_250x169.jpg",
+                "--width", "100",
+                "--forward",
+            ]
         }
     ]
 }

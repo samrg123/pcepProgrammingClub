@@ -1,7 +1,9 @@
-import py5
-import numpy as np
+import enum
 
+import numpy as np
+import py5
 from colour import Color
+
 
 class Particle:
     position    :py5.Py5Vector2D
@@ -48,7 +50,6 @@ class Particle:
         self.rgba  = self.startRGBA
 
     def update(self, deltaS:float) -> None:
-
         self.velocity+= deltaS * self.acceleration
 
         # add air resistance
@@ -76,16 +77,21 @@ class Particle:
         sketch.point(self.position.x, self.position.y)
 
 
-class FireworkSim(py5.Sketch):
-    viewportWidth :int = 1000
-    viewportHeight:int = 1000
 
-    backgroundColor:Color = Color('black')
+class Firework:
+    class State(enum.IntEnum):
+        Launching = enum.auto()
+        Exploding = enum.auto()
+        BurnedOut = enum.auto()
 
-    lastUpdateMs:float = 0
-    particles:list[Particle]
+    state:State = State.Launching    
 
-    gravity:py5.Py5Vector2D = py5.Py5Vector2D(0, 100)
+    tail           :Particle
+    tailTheta      :float
+    tailOmega      :float = 25
+    tailWiggleForce:float = 700
+
+    fireballParticles:list[Particle]
 
     minParticlesPerExplosion:int = 100
     maxParticlesPerExplosion:int = 500
@@ -102,6 +108,119 @@ class FireworkSim(py5.Sketch):
     minParticleSize = 1
     maxParticleSize = 10
 
+    gravity:py5.Py5Vector2D = py5.Py5Vector2D(0, 100)
+
+    def __init__(self, 
+                 launchPosition :py5.Py5Vector2D, 
+                 launchVelocity :py5.Py5Vector2D,
+                 tailLifetime   :float,
+                 startRGBA      :tuple[float,float,float,float],
+                 endRGBA        :tuple[float,float,float,float],
+    ):
+        self.tail = Particle(
+            position      = launchPosition,
+            velocity      = launchVelocity,
+            acceleration  = py5.Py5Vector2D(0, 0),
+            airResistance = 0,
+            lifetime      = tailLifetime,
+            startRGBA     = startRGBA,
+            endRGBA       = endRGBA,
+            startSize     = 5,
+            endSize       = 5,
+        )
+
+        self.tailTheta = py5.random(0, py5.TWO_PI)
+        self.fireballParticles = []
+
+    def explode(self) -> None:        
+        numberOfParticles = py5.random_int(self.minParticlesPerExplosion, self.maxParticlesPerExplosion)
+        for _ in range(numberOfParticles):
+            speed     = py5.random(self.minParticleSpeed, self.maxParticleSpeed)
+            direction = py5.Py5Vector2D.random()
+            velocity  = speed * direction
+
+            airResistance = py5.random(self.minParticleAirResistance, self.maxParticleAirResistance)
+
+            randomT  = py5.random()
+            lifetime = py5.lerp(self.minParticleLifetime, self.maxParticleLifetime, randomT)
+
+            startSize = py5.lerp(self.minParticleSize, self.maxParticleSize, randomT)
+            endSize   = self.minParticleSize
+
+            particle = Particle(
+                position      = self.tail.position,
+                velocity      = velocity,
+                acceleration  = self.gravity,
+                airResistance = airResistance,
+                lifetime      = lifetime,
+                startRGBA     = self.tail.startRGBA,
+                endRGBA       = self.tail.endRGBA,
+                startSize     = startSize,
+                endSize       = endSize,
+            )
+
+            self.fireballParticles.append(particle)
+
+
+    def updateTail(self, deltaS:float) -> None:
+        if self.tail.age > self.tail.lifetime:
+            self.state = Firework.State.Exploding
+            self.explode()
+            return
+
+        # wiggle the burning tail
+        wiggleForce     = self.tailWiggleForce * py5.sin(self.tailTheta)
+        wiggleDirection = py5.Py5Vector2D(-self.tail.velocity.y, self.tail.velocity.x).normalize()
+
+        self.tailTheta = (self.tailTheta + deltaS * self.tailOmega) % py5.TWO_PI
+        self.tail.acceleration = wiggleForce * wiggleDirection
+
+        self.tail.update(deltaS)
+
+
+    def updateFireball(self, deltaS:float) -> None:
+        numParticles = len(self.fireballParticles)
+        if numParticles == 0:
+            self.state = Firework.State.BurnedOut
+            return
+
+        # TODO: optimize this so we don't have to create a new list on each update
+        self.fireballParticles = [particle for particle in self.fireballParticles if particle.age <= particle.lifetime]
+        for particle in self.fireballParticles:
+            particle.update(deltaS)
+
+    def update(self, deltaS:float) -> None:
+        match self.state:
+            case Firework.State.Launching:
+                self.updateTail(deltaS)
+
+            case Firework.State.Exploding:
+                self.updateFireball(deltaS)
+
+
+    def draw(self, sketch:py5.Sketch) -> None:
+        match self.state:
+            case Firework.State.Launching:
+                self.tail.draw(sketch)
+            
+            case Firework.State.Exploding:
+                for particle in self.fireballParticles:
+                    particle.draw(sketch)
+
+
+class FireworkSim(py5.Sketch):
+    viewportWidth :int = 1000
+    viewportHeight:int = 1000
+
+    backgroundColor:Color = Color('black')
+
+    lastUpdateMs:float = 0
+
+    fireworks:list[Firework]
+
+    minTailSpeed:float = 100
+    maxTailSpeed:float = 500
+
     nextFireworkHue  :float = 0
     fireworkHueStride:float = 45/360  
     
@@ -117,8 +236,7 @@ class FireworkSim(py5.Sketch):
 
     def __init__(self):
         super().__init__()
-
-        self.particles = []
+        self.fireworks = []
 
 
     def settings(self) -> None:
@@ -128,15 +246,31 @@ class FireworkSim(py5.Sketch):
         self.window_title('Particle Physics')
         self.color_mode(py5.RGB, 1, 1, 1, 1)
 
+        self.background(self.backgroundColor)
 
     def mouse_pressed(self) -> None:
         if self.mouse_button == py5.LEFT:
-            self.spawnFirework(self.mouse_x, self.mouse_y)
+            self.launchFirework(
+                launchX = self.width/2, 
+                launchY = self.height, 
+                targetX = self.mouse_x, 
+                targetY = self.mouse_y
+            )
 
-    def spawnFirework(self, x:float, y:float) -> None:
-        position = py5.Py5Vector2D(x, y)
-        numberOfParticles = py5.random_int(self.minParticlesPerExplosion, self.maxParticlesPerExplosion)
-
+    def launchFirework(self, launchX:float, launchY:float, targetX:float, targetY:float) -> None:
+        launchSpeed    = py5.random(self.minTailSpeed, self.maxTailSpeed)
+        launchPosition = py5.Py5Vector2D(launchX, launchY)
+        trajectory     = py5.Py5Vector2D(targetX - launchX, targetY - launchY)
+        
+        # estimate lifetime based on launch speed and trajectory to hit the target
+        flightDistance = trajectory.mag
+        if flightDistance < py5.EPSILON:
+            launchVelocity = py5.Py5Vector2D(0, 0)
+            tailLifetime   = 0
+        else:
+            launchVelocity = launchSpeed * trajectory.copy.normalize()
+            tailLifetime   = flightDistance / launchSpeed
+        
         startColor = Color(hsl=(
             self.nextFireworkHue, 
             self.startParticleSaturation,   
@@ -151,69 +285,44 @@ class FireworkSim(py5.Sketch):
         ))
         endRGBA = (*endColor.get_rgb(), self.endParticleAlpha) 
 
-        for _ in range(numberOfParticles):
-
-            speed     = py5.random(self.minParticleSpeed, self.maxParticleSpeed)
-            direction = py5.Py5Vector2D.random()
-            velocity  = speed * direction
-
-            airResistance = py5.random(self.minParticleAirResistance, self.maxParticleAirResistance)
-
-            randomT  = py5.random()
-            lifetime = py5.lerp(self.minParticleLifetime, self.maxParticleLifetime, randomT)
-
-            startSize = py5.lerp(self.minParticleSize, self.maxParticleSize, randomT)
-            endSize   = self.minParticleSize
-
-            particle = Particle(
-                position      = position,
-                velocity      = velocity,
-                acceleration  = self.gravity,
-                airResistance = airResistance,
-                lifetime      = lifetime,
-                startRGBA     = startRGBA,
-                endRGBA       = endRGBA,
-                startSize     = startSize,
-                endSize       = endSize,
-            )
-
-            self.particles.append(particle)
+        firework = Firework(
+            launchPosition = launchPosition, 
+            launchVelocity = launchVelocity,
+            tailLifetime   = tailLifetime,
+            startRGBA      = startRGBA,
+            endRGBA        = endRGBA,        
+        )
+        self.fireworks.append(firework)
 
         # advance color hue for next firework
         self.nextFireworkHue = (self.nextFireworkHue + self.fireworkHueStride) % 1
 
 
-    def updateParticles(self, deltaS:float) -> None:
+    def updateFireworks(self, deltaS:float) -> None:
+        self.fireworks = [firework for firework in self.fireworks if firework.state != Firework.State.BurnedOut]
+        for firework in self.fireworks:
+            firework.update(deltaS)
 
-        # TODO: optimize this so we don't have to create a new list on each update
-        survivingParticles = []
-        for particle in self.particles:
-            if particle.age >= particle.lifetime:
-                continue
-
-            particle.update(deltaS)
-            survivingParticles.append(particle)
-
-        self.particles = survivingParticles
-
-    def drawParticles(self) -> None:
-        for particle in self.particles:
-            particle.draw(self)
+    def drawFireworks(self) -> None:
+        for firework in self.fireworks:
+            firework.draw(self)
 
     def update(self) -> None:
         updateMs = py5.millis()
         deltaS = (updateMs - self.lastUpdateMs) / 1000
 
-        self.updateParticles(deltaS)
+        self.updateFireworks(deltaS)
 
         self.lastUpdateMs = updateMs
 
     def draw(self) -> None:
-        self.background(self.backgroundColor)
+        # TODO: make alpha frametime independent 
+        self.fill(*self.backgroundColor.get_rgb(), .1)
+        self.rect(0, 0, self.width, self.height)
 
         self.update()
 
-        self.drawParticles()
+        self.drawFireworks()
 
 def main() -> None:
     fireworkSim = FireworkSim()

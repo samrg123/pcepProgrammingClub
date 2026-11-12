@@ -39,9 +39,6 @@
 		
 	],
 	"settings": {
-		"terminal.integrated.env.windows": {
-			"path": "${env:LOCALAPPDATA}/Programs/Python/Python311;${env:LOCALAPPDATA}/Programs/Python/Python311/Scripts;${env:PATH}"
-		},
 		"cSpell.words": [
 			"argb"
 		]

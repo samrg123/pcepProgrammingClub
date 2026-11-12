@@ -210,7 +210,7 @@ class Firework:
 
 class FireworkSim(py5.Sketch):
     viewportWidth :int = 1000
-    viewportHeight:int = 1000
+    viewportHeight:int = 800
 
     backgroundColor:Color = Color('black')
 

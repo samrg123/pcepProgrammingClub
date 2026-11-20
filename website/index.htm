@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+
+<html>
+
+    <header>
+
+        <script type="text/javascript">
+
+            function buttonClick(event) {
+            
+                
+                // for(var i = 0; i < button.length; ++i) {
+                    //     button = buttons[i]
+                    //     console.log(button)
+                    // }
+                
+                switch(event.target.id) {
+                    case "button1": {
+                        console.log("button1 is pressed");
+                        event.target.style = "background-color:cyan";
+                    } break;
+
+                    case "button2": {
+                        console.log("button2 is pressed");
+                    } break;
+                    
+                    case "button3": {
+                        console.log("button3 is pressed");
+                    } break;             
+                }
+                    
+                // var buttons = document.getElementsByTagName("button")
+                // for(let button of buttons) {
+
+                //     console.log(button);
+                // }
+            }
+
+
+        </script>
+
+        <style>
+            button {
+                background-color: red;
+                height: 100px;
+                width: 500px;
+            }
+
+            #button2 {
+                background-color: blue;
+            }
+
+            .greenButtons {
+                background-color: green;
+            }            
+        </style>
+
+    </header>
+
+    <body>
+
+        <img src="resources/cat.webp" width="100px">
+        <h3>
+            Index Page dfdfdfjkh
+        </h1>
+
+        <button id="button1" onclick="buttonClick(event)">
+            Click for a message!
+        </button>
+
+        <button id="button2" class="greenButtons" onclick="buttonClick(event)">
+            Click for a different message!
+        </button>   
+        
+        <button id="button3" class="greenButtons" onclick="buttonClick(event)">
+            Click for a different message!
+        </button>           
+    </body>
+</html>
